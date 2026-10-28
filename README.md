@@ -62,6 +62,31 @@ What you can set: `theme`, your own `themes` (colours, `extends`, serif or sans,
 
 A few settings widen what a spec can touch, so they are only read from the **user** config or the command line: `allow_paths`, `allow_private_hosts`, `chromium_path`, `font_dir`. A project config or a spec you downloaded cannot set them. See [SECURITY.md](SECURITY.md).
 
+## Voiceover
+
+Add `narration` to any scene and vidgen speaks it, mixes it over the music (which dips under the voice), and makes the
+scene as long as the speech needs.
+
+```yaml
+voiceover: {language: en}          # optional: voice profile, language, gap, music_level
+scenes:
+  - {type: title, title: Cache stampede, narration: "When a hot key expires, every request misses at once."}
+```
+
+Speech is made by a local text-to-speech server you run, such as [VoiceStudio](https://github.com/debpalash/VoiceStudio)
+(open source, runs on your machine). Start it, then:
+
+```bash
+vidgen render spec.yaml --voice-url http://127.0.0.1:3900/mcp/
+# or set it once in ~/.config/vidgen/config.yaml:  voice_server: {url: http://127.0.0.1:3900/mcp/}
+```
+
+vidgen talks MCP "Streamable HTTP" and calls the server's `generate_speech` tool, which must return audio inline (VoiceStudio's
+default). Audio is cached per text and voice, so re-renders do not re-speak. Narration text is sent only to the server you
+configured; the server address can be set only in the user config or on the command line, never by a spec. Prefer recording
+your own? Use `narration_audio: clip.wav` instead (PCM WAV, inside the spec folder or an allowed folder).
+VoiceStudio is AGPL-3.0 and its models have their own licences; check them before commercial use.
+
 ## Notes
 
 - **Personal details stay in config.** Nothing about any author is built in: put your watermark and default tags in `vidgen.config.yaml` (git-ignored by default).

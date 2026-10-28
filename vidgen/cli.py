@@ -10,6 +10,7 @@ from pathlib import Path
 import yaml
 
 from .config import Config, ConfigError, load_config, user_config_path
+from .voice import VoiceServer
 from .render import RenderError, Runtime, render, share_copy
 from .safety import UnsafeInput
 from .shots import CaptureError
@@ -23,7 +24,8 @@ def _templates() -> list[str]:
 
 
 def _config(args: argparse.Namespace) -> Config:
-    cfg = load_config(args.config, cli_allow_paths=args.allow_path, cli_allow_private_hosts=args.allow_private_hosts)
+    cfg = load_config(args.config, cli_allow_paths=args.allow_path, cli_allow_private_hosts=args.allow_private_hosts,
+                      cli_voice_url=getattr(args, "voice_url", None))
     set_font_dirs(cfg.font_dirs)
     return cfg
 
@@ -32,7 +34,8 @@ def _runtime(spec: dict, cfg: Config, music_override: str | None = None) -> Runt
     roots = [Path(spec["_dir"]), *[p.parent for p in cfg.sources], *cfg.allow_paths]
     if music_override and music_override not in ("koto", "none"):
         roots.append(Path(music_override).expanduser().resolve().parent)  # named on the command line: trusted
-    return Runtime(roots=roots, allow_private_hosts=cfg.allow_private_hosts, chromium=cfg.chromium_path)
+    voice = VoiceServer(**cfg.voice_server) if cfg.voice_server else None
+    return Runtime(roots=roots, allow_private_hosts=cfg.allow_private_hosts, chromium=cfg.chromium_path, voice=voice)
 
 
 def _confined_output_dir(spec: dict, cfg: Config) -> Path:
@@ -129,6 +132,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="also let the spec read images, pages and music from DIR (repeatable)")
     common.add_argument("--allow-private-hosts", action="store_true",
                         help="let `shot` capture localhost and private-network URLs")
+    common.add_argument("--voice-url", metavar="URL",
+                        help="text-to-speech server for scene narration, e.g. VoiceStudio at http://127.0.0.1:3900/mcp/")
     sub = p.add_subparsers(dest="cmd", required=True)
     v = sub.add_parser("validate", parents=[common], help="check a spec without rendering")
     v.add_argument("spec")

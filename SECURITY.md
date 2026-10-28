@@ -8,6 +8,7 @@ vidgen turns a YAML spec into a video. A spec names files and URLs, so it is tre
 - URL captures run through a small local pinning proxy: each host name is resolved once, every address is checked, and the browser is connected to that exact address, so DNS rebinding cannot swap in an internal address after the check.
 - Music files are only read as real audio containers (wav, mp3, ogg, flac, mp4/m4a, aac, mkv/webm), never as playlists or scripts that point at other files.
 - Without `--out`, `output_dir` from a spec or project config must stay inside the spec folder, the current folder, or an `--allow-path` folder.
+- Voiceover: the text-to-speech server address is a user-config / command-line setting only, so a spec cannot make vidgen send its text elsewhere. Server replies are size-capped and must be valid PCM WAV before they are used.
 - Specs, configs, text, scene counts, durations, image sizes and viewport sizes are bounded.
 
 Not covered: a malicious `chromium_path` or font file you chose yourself, and a spec kept in a very broad folder (your home directory, `/tmp`), because the spec's own folder is readable. Render specs you do not trust inside a container or VM with no access to internal networks.

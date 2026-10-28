@@ -24,9 +24,9 @@ MAX_CONFIG_BYTES = 256 * 1024
 CONFIG_FILENAME = "vidgen.config.yaml"
 
 # keys any config layer (and the spec) may set
-SHARED_KEYS = {"theme", "themes", "formats", "watermark", "music", "meta", "poster", "fps", "output_dir", "limits"}
+SHARED_KEYS = {"theme", "themes", "formats", "watermark", "music", "meta", "poster", "fps", "output_dir", "limits", "voiceover"}
 # keys only the user config / CLI may set (they widen access)
-TRUSTED_KEYS = {"allow_paths", "allow_private_hosts", "chromium_path", "font_dir"}
+TRUSTED_KEYS = {"allow_paths", "allow_private_hosts", "chromium_path", "font_dir", "voice_server"}
 
 DEFAULTS: dict[str, Any] = {
     "theme": "sumi",
@@ -52,6 +52,7 @@ class Config:
     allow_private_hosts: bool = False
     chromium_path: str | None = None
     font_dirs: list[str] = field(default_factory=list)
+    voice_server: dict[str, Any] | None = None  # {url, client_id}; user config / CLI only
     sources: list[Path] = field(default_factory=list)
 
 
@@ -121,12 +122,13 @@ def _check_keys(path: Path, raw: dict[str, Any], trusted: bool) -> None:
     if unknown:
         hint = ""
         if set(unknown) & TRUSTED_KEYS:
-            hint = " (allow_paths, allow_private_hosts, chromium_path and font_dir are only read from the user config or the CLI)"
+            hint = " (allow_paths, allow_private_hosts, chromium_path, font_dir and voice_server are only read from the user config or the CLI)"
         raise ConfigError(f"{path}: unknown or not-permitted key(s): {', '.join(unknown)}{hint}")
 
 
 def load_config(explicit: str | Path | None = None, cwd: Path | None = None,
-                cli_allow_paths: list[str] | None = None, cli_allow_private_hosts: bool = False) -> Config:
+                cli_allow_paths: list[str] | None = None, cli_allow_private_hosts: bool = False,
+                cli_voice_url: str | None = None) -> Config:
     cfg = Config()
     user = user_config_path()
     layers: list[tuple[Path, bool]] = []
@@ -146,6 +148,11 @@ def load_config(explicit: str | Path | None = None, cwd: Path | None = None,
                 cfg.allow_paths.append(Path(os.path.expanduser(str(p))))
             cfg.allow_private_hosts = bool(raw.pop("allow_private_hosts", cfg.allow_private_hosts))
             cfg.chromium_path = raw.pop("chromium_path", cfg.chromium_path)
+            vs = raw.pop("voice_server", None)
+            if vs is not None:
+                if not isinstance(vs, dict) or set(vs) - {"url", "client_id", "timeout"}:
+                    raise ConfigError(f"{path}: voice_server is {{url, client_id, timeout}}")
+                cfg.voice_server = {**(cfg.voice_server or {}), **vs}
             fd = raw.pop("font_dir", None)
             if fd:
                 cfg.font_dirs.append(str(fd))
@@ -153,6 +160,8 @@ def load_config(explicit: str | Path | None = None, cwd: Path | None = None,
         cfg.sources.append(path)
     cfg.allow_paths += [Path(os.path.expanduser(p)) for p in (cli_allow_paths or [])]
     cfg.allow_private_hosts = cfg.allow_private_hosts or cli_allow_private_hosts
+    if cli_voice_url:
+        cfg.voice_server = {**(cfg.voice_server or {}), "url": cli_voice_url}
     cfg.chromium_path = cfg.chromium_path or os.environ.get("VIDGEN_CHROMIUM")
     if os.environ.get("VIDGEN_FONT_DIR"):
         cfg.font_dirs.append(os.environ["VIDGEN_FONT_DIR"])

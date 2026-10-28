@@ -486,3 +486,127 @@ def test_capture_of_local_server_works_through_the_proxy(tmp_path):
         assert im.getpixel((10, 10))[0] > 150
     finally:
         srv.shutdown()
+
+
+# --- voiceover ---------------------------------------------------------------------------------------------
+
+def _tone_wav_bytes(seconds: float, rate: int = 22050) -> bytes:
+    import io, wave
+    t = np.arange(int(seconds * rate)) / rate
+    pcm = (np.sin(2 * np.pi * 220 * t) * 12000).astype("<i2")
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(rate); w.writeframes(pcm.tobytes())
+    return buf.getvalue()
+
+
+def _fake_voice_server(seconds: float = 3.0, sse: bool = False, fail: bool = False):
+    """A stand-in for a local MCP text-to-speech server: initialize, notifications, tools/call generate_speech."""
+    import base64, http.server, json, threading
+    calls: list[dict] = []
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            msg = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            if "id" not in msg:
+                self.send_response(202); self.end_headers(); return
+            if msg["method"] == "initialize":
+                result = {"protocolVersion": "2025-03-26", "capabilities": {}, "serverInfo": {"name": "fake", "version": "0"}}
+            else:
+                calls.append(msg["params"]["arguments"])
+                if fail:
+                    result = {"isError": True, "content": [{"type": "text", "text": "model not installed"}]}
+                else:
+                    payload = {"wav_base64": base64.b64encode(_tone_wav_bytes(seconds)).decode()}
+                    result = {"content": [{"type": "text", "text": json.dumps(payload)}]}
+            body = json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": result})
+            if sse:
+                body, ctype = f"event: message\ndata: {body}\n\n", "text/event-stream"
+            else:
+                ctype = "application/json"
+            data = body.encode()
+            self.send_response(200); self.send_header("Content-Type", ctype)
+            self.send_header("Mcp-Session-Id", "s1"); self.send_header("Content-Length", str(len(data)))
+            self.end_headers(); self.wfile.write(data)
+
+        def log_message(self, *a): pass
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, calls, f"http://127.0.0.1:{srv.server_address[1]}/mcp/"
+
+
+def _probe(path) -> dict:
+    import json, subprocess
+    out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type:format=duration",
+                          "-of", "json", str(path)], capture_output=True, text=True, check=True).stdout
+    d = json.loads(out)
+    return {"duration": float(d["format"]["duration"]), "streams": [s["codec_type"] for s in d["streams"]]}
+
+
+@pytest.mark.parametrize("sse", [False, True])
+def test_narration_is_synthesised_mixed_and_stretches_the_scene(tmp_path, sse):
+    srv, calls, url = _fake_voice_server(seconds=3.0, sse=sse)
+    try:
+        spec = tmp_path / "v.yaml"
+        spec.write_text("voiceover: {voice: warm, language: en}\nmusic: {style: koto}\nscenes:\n"
+                        "  - {type: title, title: Hi, seconds: 1, narration: Hello there}\n"
+                        "  - {type: title, title: Bye, seconds: 1}\n")
+        rc = main(["render", str(spec), "--out", str(tmp_path / "o"), "--format", "square", "--fps", "5", "--voice-url", url])
+        assert rc == 0
+    finally:
+        srv.shutdown()
+    assert calls == [{"text": "Hello there", "profile_id": "warm", "language": "en"}]
+    info = _probe(tmp_path / "o" / "square" / "video.mp4")
+    assert "audio" in info["streams"]
+    assert info["duration"] >= 3.0 + 0.5 + 1.0 - 0.3  # scene 1 stretched to speech + gap, plus scene 2
+
+
+def test_narration_is_cached_between_renders(tmp_path):
+    srv, calls, url = _fake_voice_server(seconds=1.0)
+    try:
+        spec = tmp_path / "v.yaml"
+        spec.write_text("music: {style: none}\nscenes:\n  - {type: title, title: Hi, seconds: 1, narration: Same words}\n")
+        for _ in range(2):
+            assert main(["render", str(spec), "--out", str(tmp_path / "o"), "--format", "square", "--fps", "5", "--voice-url", url]) == 0
+    finally:
+        srv.shutdown()
+    assert len(calls) == 1
+
+
+def test_narration_without_a_voice_server_is_a_clear_error(tmp_path, capsys):
+    spec = tmp_path / "v.yaml"
+    spec.write_text("music: {style: none}\nscenes:\n  - {type: title, title: Hi, seconds: 1, narration: Words}\n")
+    rc = main(["render", str(spec), "--out", str(tmp_path / "o"), "--format", "square", "--fps", "5"])
+    assert rc != 0
+    assert "no voice server is configured" in capsys.readouterr().err
+
+
+def test_voice_server_error_is_reported(tmp_path, capsys):
+    srv, _, url = _fake_voice_server(fail=True)
+    try:
+        spec = tmp_path / "v.yaml"
+        spec.write_text("music: {style: none}\nscenes:\n  - {type: title, title: Hi, seconds: 1, narration: Words}\n")
+        rc = main(["render", str(spec), "--out", str(tmp_path / "o"), "--format", "square", "--fps", "5", "--voice-url", url])
+    finally:
+        srv.shutdown()
+    assert rc != 0 and "model not installed" in capsys.readouterr().err
+
+
+def test_a_spec_cannot_choose_the_voice_server(tmp_path):
+    with pytest.raises(SpecError, match="voice_server"):
+        validate({"voice_server": {"url": "http://evil.example/"}, "scenes": [{"type": "title", "title": "x"}]}, Config(), base_dir=tmp_path)
+    p = tmp_path / "vidgen.config.yaml"
+    p.write_text("voice_server: {url: 'http://evil.example/'}\n")
+    with pytest.raises(ConfigError, match="voice_server"):
+        load_config(None, cwd=tmp_path)
+
+
+def test_narration_audio_file_is_confined_to_allowed_folders(tmp_path):
+    outside = tmp_path / "outside"; outside.mkdir()
+    (outside / "v.wav").write_bytes(_tone_wav_bytes(1.0))
+    work = tmp_path / "work"; work.mkdir()
+    spec = work / "s.yaml"
+    spec.write_text(f"music: {{style: none}}\nscenes:\n  - {{type: title, title: Hi, seconds: 1, narration_audio: {outside / 'v.wav'}}}\n")
+    assert main(["render", str(spec), "--out", str(work / "o"), "--format", "square", "--fps", "5"]) != 0
+    assert main(["render", str(spec), "--out", str(work / "o"), "--format", "square", "--fps", "5", "--allow-path", str(outside)]) == 0

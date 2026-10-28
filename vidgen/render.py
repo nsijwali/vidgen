@@ -12,6 +12,7 @@ from typing import Any
 from PIL import Image, ImageDraw
 
 from . import music as music_mod
+from . import voice as voice_mod
 from .safety import UnsafeInput, resolve_local
 from .scenes import Ctx, Scene, build_scene, make_caption
 from .specs import FORMATS
@@ -34,6 +35,7 @@ class Runtime:
     roots: list[Path] = field(default_factory=list)
     allow_private_hosts: bool = False
     chromium: str | None = None
+    voice: "voice_mod.VoiceServer | None" = None  # where narration is synthesised (trusted setting)
 
     @classmethod
     def for_spec(cls, spec: dict[str, Any]) -> "Runtime":
@@ -234,14 +236,23 @@ def render(spec: dict[str, Any], fmt: str, out_dir: Path, fps: int = 30, scale: 
     if not 1 <= fps <= 60:
         raise RenderError("fps must be between 1 and 60")
     rt = runtime or Runtime.for_spec(spec)
+    spec = {**spec, "scenes": [dict(sc) for sc in spec["scenes"]]}  # narration stretches scene lengths: work on a copy
     out = out_dir / fmt
     out.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="vidgen-") as td:
         work = Path(td)
         cache = out_dir / ".cache"
         cache.mkdir(parents=True, exist_ok=True)
+        try:
+            clips = voice_mod.prepare_narration(spec, rt.voice, cache, lambda p: resolve_local(p, Path(spec.get("_dir", ".")), rt.roots))
+        except (voice_mod.VoiceError, UnsafeInput) as e:
+            raise RenderError(f"voiceover: {e}") from e
+        limit = spec["limits"]["max_seconds"]
+        if sum(sc["seconds"] for sc in spec["scenes"]) > limit:
+            raise RenderError(f"with narration the video is longer than limits.max_seconds ({limit}s)")
         tl = Timeline(spec, fmt, cache, scale, rt)
         total = tl.total
+        narration = voice_mod.write_wav(work / "narration.wav", voice_mod.build_track(spec, clips, total)) if clips else None
         audio = _prepare_audio(spec, total, work, music_override, rt)
         poster = tl.frame_at(tl.poster_time())
         poster.convert("RGB").save(out / "poster.jpg", quality=92)
@@ -249,16 +260,29 @@ def render(spec: dict[str, Any], fmt: str, out_dir: Path, fps: int = 30, scale: 
         W, H = tl.ctx.W, tl.ctx.H
         cmd = ["ffmpeg", "-loglevel", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24",
                "-s", f"{W}x{H}", "-r", str(fps), "-i", "-"]
-        if audio:
+        # Audio inputs, in order: music (optional), narration (optional). Input 0 is the video.
+        inputs: list[Path] = [a for a in (audio, narration) if a]
+        for a in inputs:
             # ffmpeg sniffs the format from content, so a file named .mp3 could really be a concat/playlist
             # script that pulls in other files. Only accept real audio containers, local files only.
-            cmd += ["-protocol_whitelist", "file", "-format_whitelist", AUDIO_FORMATS, "-i", str(audio)]
+            cmd += ["-protocol_whitelist", "file", "-format_whitelist", AUDIO_FORMATS, "-i", str(a)]
         cmd += ["-c:v", "libx264", "-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p"]
-        if audio:
+        if inputs:
             vol = float(spec["music"].get("volume", 0.9))
-            cmd += ["-af", f"atrim=0:{total:.3f},asetpts=PTS-STARTPTS,volume={vol},"
-                           f"afade=t=in:st=0:d=0.8,afade=t=out:st={max(0.0, total - 2.0):.3f}:d=2.0",
-                    "-c:a", "aac", "-b:a", "192k", "-ac", "2"]
+            fade_out = max(0.0, total - 2.0)
+            music_f = (f"atrim=0:{total:.3f},asetpts=PTS-STARTPTS,volume={{vol}},"
+                       f"afade=t=in:st=0:d=0.8,afade=t=out:st={fade_out:.3f}:d=2.0")
+            if audio and narration:
+                level = float(spec["voiceover"].get("music_level", 0.35))  # music sits under the voice
+                graph = (f"[1:a]{music_f.format(vol=vol * level)}[m];"
+                         f"[2:a]atrim=0:{total:.3f},asetpts=PTS-STARTPTS[n];"
+                         "[m][n]amix=inputs=2:duration=longest:normalize=0[a]")
+                cmd += ["-filter_complex", graph, "-map", "0:v", "-map", "[a]"]
+            elif audio:
+                cmd += ["-af", music_f.format(vol=vol)]
+            else:
+                cmd += ["-af", f"atrim=0:{total:.3f},asetpts=PTS-STARTPTS,afade=t=out:st={fade_out:.3f}:d=1.0"]
+            cmd += ["-c:a", "aac", "-b:a", "192k", "-ac", "2"]
         cmd += ["-movflags", "+faststart", "-t", f"{total:.3f}", str(out / "video.mp4")]
         errlog = open(work / "ffmpeg.log", "wb")
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=errlog)

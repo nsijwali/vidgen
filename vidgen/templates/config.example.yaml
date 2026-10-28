@@ -26,6 +26,14 @@ meta:
   links: []
   credits: []
 
+# Voiceover. Give a scene `narration: "text"` (or `narration_audio: clip.wav`) and the scene stretches to fit the speech.
+# Defaults for how it is voiced (a spec may override them). music_level is how loud the music sits under the voice.
+voiceover:
+  # voice: <profile id from your TTS app>     # omit to use the server's default voice
+  # language: en
+  gap: 0.5                   # seconds of pause after each narration
+  music_level: 0.35
+
 # Your own colour themes. `extends` starts from another theme; set only what you want to change.
 # themes:
 #   brand:
@@ -45,3 +53,8 @@ limits:
 # allow_private_hosts: false             # true to let `shot` capture localhost / LAN URLs
 # chromium_path: /usr/bin/chromium       # browser used for URL captures
 # font_dir: ~/fonts                      # extra fonts folder
+
+# --- User config only (~/.config/vidgen/config.yaml or --voice-url). A spec or project config cannot set these. ---
+# voice_server:
+#   url: http://127.0.0.1:3900/mcp/    # VoiceStudio (or any server with an MCP `generate_speech` tool)
+#   client_id: vidgen

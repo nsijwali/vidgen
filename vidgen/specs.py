@@ -75,7 +75,7 @@ def validate(raw: Any, config: Config | None = None, base_dir: Path | None = Non
     cfg = config or Config()
     if not isinstance(raw, dict):
         raise SpecError("spec must be a mapping")
-    spec_forbidden = {"allow_paths", "allow_private_hosts", "chromium_path", "font_dir"} & set(raw)
+    spec_forbidden = {"allow_paths", "allow_private_hosts", "chromium_path", "font_dir", "voice_server"} & set(raw)
     if spec_forbidden:
         raise SpecError(f"{', '.join(sorted(spec_forbidden))}: not settable from a spec (user config or CLI only)")
     raw = dict(raw)
@@ -83,6 +83,7 @@ def validate(raw: Any, config: Config | None = None, base_dir: Path | None = Non
     if unknown_top:
         raise SpecError(f"unknown top-level key(s): {', '.join(unknown_top)}")
     scenes_raw = raw.pop("scenes", None)
+
     if base_dir is not None:
         _absolutize(raw, base_dir)  # paths in a spec are relative to the spec
     spec: dict[str, Any] = merge(cfg.data, raw)
@@ -155,6 +156,11 @@ def validate(raw: Any, config: Config | None = None, base_dir: Path | None = Non
         sc.setdefault("seconds", DEFAULT_SECONDS[t])
         sc["seconds"] = _num(i, "seconds", sc["seconds"], 0.1, limits["max_seconds"])
         total += sc["seconds"]
+        for k in ("narration",):
+            if k in sc:
+                sc[k] = _text(f"scene {i}: {k}", sc[k])
+        if "narration_audio" in sc and (not isinstance(sc["narration_audio"], str) or not sc["narration_audio"].strip()):
+            raise SpecError(f"scene {i}: narration_audio must be a path to a .wav file")
         for k in ("title", "text", "eyebrow", "subtitle", "url", "caption", "value", "label"):
             if k in sc:
                 sc[k] = _text(f"scene {i}: {k}", sc[k])
@@ -163,7 +169,20 @@ def validate(raw: Any, config: Config | None = None, base_dir: Path | None = Non
     if total > limits["max_seconds"]:
         raise SpecError(f"total length {total:.0f}s; the limit is {limits['max_seconds']}s (limits.max_seconds)")
     spec["scenes"] = out
+    spec["voiceover"] = _check_voiceover(spec.get("voiceover") or {})
     return spec
+
+
+def _check_voiceover(v: Any) -> dict[str, Any]:
+    if not isinstance(v, dict) or set(v) - {"voice", "language", "gap", "music_level"}:
+        raise SpecError("voiceover is {voice, language, gap, music_level}")
+    for k in ("voice", "language"):
+        if k in v and (not isinstance(v[k], str) or not v[k].strip() or len(v[k]) > 200):
+            raise SpecError(f"voiceover.{k} must be a short string")
+    for k, lo, hi in (("gap", 0, 10), ("music_level", 0, 1)):
+        if k in v and (isinstance(v[k], bool) or not isinstance(v[k], (int, float)) or not lo <= v[k] <= hi):
+            raise SpecError(f"voiceover.{k} must be a number between {lo} and {hi}")
+    return v
 
 
 def _check_scene(i: int, t: str, sc: dict[str, Any]) -> None:

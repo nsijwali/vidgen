@@ -1,0 +1,217 @@
+"""Voiceover: turn each scene's `narration` into speech and mix it into the video's audio.
+
+Speech comes from a local text-to-speech server you run yourself (VoiceStudio's MCP endpoint, by default
+http://127.0.0.1:3900/mcp/), or from audio files you recorded (`narration_audio`). The server address is a
+trusted setting: only the user config or the command line can set it, so a spec cannot make vidgen send its
+text to another host.
+
+The client speaks plain MCP "Streamable HTTP" (JSON-RPC over POST) with the standard library, so it needs no
+extra dependency.
+"""
+from __future__ import annotations
+
+import base64
+import hashlib
+import json
+import wave
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+from urllib.error import URLError
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
+
+import numpy as np
+
+SAMPLE_RATE = 44100
+MAX_NARRATION_SECONDS = 600
+MAX_RESPONSE_BYTES = 200 * 1024 * 1024
+DEFAULT_URL = "http://127.0.0.1:3900/mcp/"
+
+
+class VoiceError(RuntimeError):
+    pass
+
+
+@dataclass
+class VoiceServer:
+    url: str = DEFAULT_URL
+    client_id: str = "vidgen"
+    timeout: float = 600.0
+
+    def __post_init__(self) -> None:
+        u = urlparse(self.url)
+        if u.scheme not in ("http", "https") or not u.hostname:
+            raise VoiceError(f"voice_server.url must be an http(s) URL, got {self.url!r}")
+
+
+class _Session:
+    def __init__(self, server: VoiceServer):
+        self.server = server
+        self.sid: str | None = None
+        self._id = 0
+
+    def _post(self, payload: dict[str, Any]) -> dict[str, Any] | None:
+        headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream",
+                   "X-OmniVoice-Client-Id": self.server.client_id}
+        if self.sid:
+            headers["Mcp-Session-Id"] = self.sid
+        req = Request(self.server.url, data=json.dumps(payload).encode(), headers=headers, method="POST")
+        try:
+            with urlopen(req, timeout=self.server.timeout) as r:  # noqa: S310 (scheme checked in VoiceServer)
+                self.sid = r.headers.get("Mcp-Session-Id") or self.sid
+                body = r.read(MAX_RESPONSE_BYTES + 1)
+                ctype = r.headers.get("Content-Type", "")
+        except URLError as e:
+            raise VoiceError(f"cannot reach the voice server at {self.server.url}: {e.reason}. "
+                             "Is VoiceStudio running?") from e
+        except OSError as e:
+            raise VoiceError(f"voice server request failed: {e}") from e
+        if len(body) > MAX_RESPONSE_BYTES:
+            raise VoiceError("voice server response is too large")
+        if "id" not in payload or not body.strip():
+            return None
+        text = body.decode("utf-8", errors="replace")
+        if "text/event-stream" in ctype:
+            for line in text.splitlines():
+                if line.startswith("data:") and line[5:].strip():
+                    msg = json.loads(line[5:])
+                    if msg.get("id") == payload["id"]:
+                        return msg
+            raise VoiceError("voice server sent no reply")
+        return json.loads(text)
+
+    def rpc(self, method: str, params: dict[str, Any]) -> Any:
+        self._id += 1
+        msg = self._post({"jsonrpc": "2.0", "id": self._id, "method": method, "params": params})
+        if msg is None or "error" in msg:
+            raise VoiceError(f"voice server error on {method}: {(msg or {}).get('error', 'empty reply')}")
+        return msg["result"]
+
+    def start(self) -> None:
+        self.rpc("initialize", {"protocolVersion": "2025-03-26", "capabilities": {},
+                                "clientInfo": {"name": "vidgen", "version": "1"}})
+        self._post({"jsonrpc": "2.0", "method": "notifications/initialized"})
+
+
+def _find_wav_b64(result: dict[str, Any]) -> str | None:
+    """The tool reply carries `wav_base64` as JSON text (or as an audio/resource block)."""
+    for block in result.get("content", []):
+        if block.get("type") == "audio" and block.get("data"):
+            return block["data"]
+        text = block.get("text")
+        if isinstance(text, str):
+            try:
+                data = json.loads(text)
+            except ValueError:
+                continue
+            if isinstance(data, dict):
+                if data.get("error"):
+                    raise VoiceError(f"voice server: {data['error']}")
+                if data.get("wav_base64"):
+                    return data["wav_base64"]
+    return None
+
+
+def synthesize(session: _Session, text: str, voice: str | None, language: str | None) -> bytes:
+    args: dict[str, Any] = {"text": text}
+    if voice:
+        args["profile_id"] = voice
+    if language:
+        args["language"] = language
+    result = session.rpc("tools/call", {"name": "generate_speech", "arguments": args})
+    if result.get("isError"):
+        raise VoiceError(f"voice server could not speak the text: {json.dumps(result.get('content'))[:300]}")
+    b64 = _find_wav_b64(result)
+    if not b64:
+        raise VoiceError("voice server reply had no audio (is OMNIVOICE_MCP_OUTPUT_MODE set to 'files'? "
+                         "vidgen needs the default inline mode)")
+    return base64.b64decode(b64, validate=False)
+
+
+def read_wav(path: Path) -> np.ndarray:
+    """PCM WAV -> mono float32 at SAMPLE_RATE."""
+    try:
+        with wave.open(str(path), "rb") as w:
+            ch, width, rate, n = w.getnchannels(), w.getsampwidth(), w.getframerate(), w.getnframes()
+            if n / max(rate, 1) > MAX_NARRATION_SECONDS:
+                raise VoiceError(f"{path.name}: narration clip is longer than {MAX_NARRATION_SECONDS}s")
+            raw = w.readframes(n)
+    except (wave.Error, EOFError) as e:
+        raise VoiceError(f"{path.name}: not a readable PCM WAV file ({e})") from e
+    if width == 2:
+        a = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
+    elif width == 1:
+        a = (np.frombuffer(raw, dtype=np.uint8).astype(np.float32) - 128.0) / 128.0
+    elif width == 4:
+        a = np.frombuffer(raw, dtype="<i4").astype(np.float32) / 2147483648.0
+    else:
+        raise VoiceError(f"{path.name}: unsupported sample width {width}")
+    a = a.reshape(-1, ch).mean(axis=1) if ch > 1 else a
+    if rate != SAMPLE_RATE and len(a):
+        x = np.linspace(0, len(a) - 1, int(len(a) * SAMPLE_RATE / rate))
+        a = np.interp(x, np.arange(len(a)), a).astype(np.float32)
+    return a
+
+
+def write_wav(path: Path, samples: np.ndarray) -> Path:
+    pcm = (np.clip(samples, -1, 1) * 32767).astype("<i2")
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(SAMPLE_RATE)
+        w.writeframes(pcm.tobytes())
+    return path
+
+
+def prepare_narration(spec: dict[str, Any], server: VoiceServer | None, cache: Path,
+                      resolve_audio) -> dict[int, np.ndarray]:
+    """Return {scene index: samples} for every scene with narration, and stretch scene lengths to fit.
+
+    `resolve_audio(path)` must confine `narration_audio` files to the allowed folders."""
+    vo = spec.get("voiceover") or {}
+    gap = float(vo.get("gap", 0.5))
+    clips: dict[int, np.ndarray] = {}
+    session: _Session | None = None
+    cache.mkdir(parents=True, exist_ok=True)
+    for i, sc in enumerate(spec["scenes"]):
+        if sc.get("narration_audio"):
+            samples = read_wav(resolve_audio(sc["narration_audio"]))
+        elif sc.get("narration"):
+            if server is None:
+                raise VoiceError(
+                    f"scene {i} has narration but no voice server is configured. Set voice_server.url in your "
+                    "user config (vidgen config init --user) or pass --voice-url, or use narration_audio files.")
+            key = hashlib.sha256(json.dumps([sc["narration"], vo.get("voice"), vo.get("language")]).encode()).hexdigest()[:20]
+            cached = cache / f"narration-{key}.wav"
+            if not cached.exists():
+                if session is None:
+                    session = _Session(server)
+                    session.start()
+                audio = synthesize(session, sc["narration"], vo.get("voice"), vo.get("language"))
+                tmp = cached.with_suffix(".part")
+                tmp.write_bytes(audio)
+                try:
+                    read_wav(tmp)  # reject anything that is not a sane WAV before it is cached
+                except VoiceError:
+                    tmp.unlink(missing_ok=True)
+                    raise
+                tmp.replace(cached)
+            samples = read_wav(cached)
+        else:
+            continue
+        clips[i] = samples
+        sc["seconds"] = max(sc["seconds"], len(samples) / SAMPLE_RATE + gap)
+    return clips
+
+
+def build_track(spec: dict[str, Any], clips: dict[int, np.ndarray], total: float, lead: float = 0.3) -> np.ndarray:
+    """Place each clip `lead` seconds after its scene starts."""
+    track = np.zeros(int(total * SAMPLE_RATE) + SAMPLE_RATE, dtype=np.float32)
+    t = 0.0
+    for i, sc in enumerate(spec["scenes"]):
+        if i in clips:
+            a = int((t + lead) * SAMPLE_RATE)
+            c = clips[i]
+            track[a:a + len(c)] += c[: max(0, len(track) - a)]
+        t += sc["seconds"]
+    peak = float(np.abs(track).max())
+    return track / peak * 0.95 if peak > 0.95 else track
