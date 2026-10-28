@@ -1,0 +1,28 @@
+# A ~16s code tip: hook, code typed on screen with a highlighted line, one-line result.
+meta:
+  title: "Python tip: freeze time in tests"
+  description: "A tiny pattern that removes flaky date-dependent tests."
+  tags: [python, pytest, testing]
+theme: midnight
+# watermark: "Your Name"    # text, or {image: logo.png, position: top-left, opacity: 0.75}; or set it once in vidgen.config.yaml
+formats: [vertical]
+music: {style: koto}
+scenes:
+  - type: type
+    text: "Is your test suite flaky on month end?"
+    seconds: 3
+  - type: code
+    seconds: 7
+    title: "test_billing.py"
+    code: |
+      @pytest.mark.freeze_time("2026-01-31")
+      def test_invoice_on_month_end():
+          invoice = bill(customer)
+          assert invoice.due == date(2026, 2, 28)
+    highlight: [1]
+    caption: "Pin the clock. Same result every run."
+  - type: stat
+    seconds: 3.5
+    eyebrow: "Result"
+    value: "0 flaky"
+    label: "date-dependent failures"

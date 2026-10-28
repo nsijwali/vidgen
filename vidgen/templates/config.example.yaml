@@ -1,0 +1,47 @@
+# vidgen configuration. Copy to ./vidgen.config.yaml (this project) or ~/.config/vidgen/config.yaml (all projects).
+# Precedence, lowest to highest: built-in defaults < user config < project config < the spec < command-line flags.
+# Relative paths are resolved from the folder that contains the file that names them.
+
+theme: sumi                  # sumi | washi | midnight | any name under `themes:` below
+formats: [landscape]         # landscape | vertical | square
+fps: 30
+output_dir: vidgen-output
+
+# Shown on every frame and the poster. Remove or set to null for none.
+# watermark: "Your Name"
+# watermark: {image: logo.png, position: top-left, opacity: 0.75, size: 56}   # text or image
+
+music:
+  style: koto                # koto (generated, no credit needed) | none | path/to/your-track.mp3
+  bpm: 72
+  root: D
+  scale: hirajoshi           # hirajoshi | in | yo | iwato
+  seed: 7
+  volume: 0.9
+  snap: false                # true rounds each scene length to whole beats
+
+# Defaults merged into every video's share-copy.txt (spec values are added after these).
+meta:
+  tags: []
+  links: []
+  credits: []
+
+# Your own colour themes. `extends` starts from another theme; set only what you want to change.
+# themes:
+#   brand:
+#     extends: midnight
+#     bg: "#0b1220"
+#     accent: "#ff6b35"
+#     display: sans          # serif | sans
+#     frame: false
+
+limits:
+  max_seconds: 600           # total video length
+  max_scenes: 200
+
+# --- Only read from the USER config (~/.config/vidgen/config.yaml) or the command line. ---
+# A project config or a spec you downloaded cannot set these.
+# allow_paths: [~/Pictures/logos]        # extra folders a spec may read images, pages and music from
+# allow_private_hosts: false             # true to let `shot` capture localhost / LAN URLs
+# chromium_path: /usr/bin/chromium       # browser used for URL captures
+# font_dir: ~/fonts                      # extra fonts folder

@@ -1,0 +1,3 @@
+"""vidgen: render short videos from a YAML spec."""
+
+__version__ = "0.1.0"

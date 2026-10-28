@@ -1,0 +1,18 @@
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.venv/
+build/
+dist/
+# render output and caches
+vidgen-output/
+.cache/
+*.mp4
+*.wav
+# personal configuration and anything that looks like a secret
+vidgen.config.yaml
+.env
+.env.*
+*.pem
+*.key

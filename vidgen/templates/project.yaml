@@ -1,0 +1,30 @@
+# A ~20s project showcase: hook, the real UI with a slow camera move, three points, end card.
+meta:
+  title: "MyProject: one line that says what it does"
+  description: "What it is, who it is for, and the one thing that makes it different."
+  tags: [opensource, webdev]
+  links: ["https://example.com"]
+theme: sumi
+# watermark: "Your Name"    # text, or {image: logo.png, position: top-left, opacity: 0.75}; or set it once in vidgen.config.yaml
+formats: [landscape]
+music: {style: koto, bpm: 72, seed: 7}
+scenes:
+  - type: type
+    text: "The question your product answers?"
+    seconds: 3
+  - type: shot
+    source: https://example.com        # a URL (captured with Playwright) or a PNG path
+    seconds: 5
+    zoom: [1.0, 1.6]
+    focus: [0.5, 0.4]
+    caption: "Say what the user sees."
+  - type: bullets
+    seconds: 5
+    title: "How it works"
+    items: ["First thing", "Second thing", "Third thing"]
+  - type: title
+    seconds: 4
+    eyebrow: "MyProject"
+    title: "MyProject"
+    subtitle: "One-line promise."
+    url: "example.com"
