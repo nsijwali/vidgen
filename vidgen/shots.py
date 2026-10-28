@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 
 from PIL import Image
 
+from .pinproxy import PinningProxy
 from .safety import UnsafeInput, check_http_url, file_url_to_path, resolve_local
 
 MAX_IMAGE_PIXELS = 64_000_000  # refuse decompression bombs
@@ -95,8 +96,11 @@ def _capture(url: str, opts: dict, dest: Path, roots: list[Path], allow_private:
             route.abort()
 
     try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(**({"executable_path": chromium} if chromium else {}))
+        with sync_playwright() as p, PinningProxy(allow_private) as proxy:
+            # Everything http(s) goes through the pinning proxy ("<-loopback>" stops Chromium bypassing it for
+            # localhost names), so the address checked is the address connected to. file:// stays local.
+            browser = p.chromium.launch(proxy={"server": proxy.url, "bypass": "<-loopback>"},
+                                        **({"executable_path": chromium} if chromium else {}))
             try:
                 ctx = browser.new_context(viewport={"width": vw, "height": vh}, device_scale_factor=scale,
                                           accept_downloads=False, service_workers="block")

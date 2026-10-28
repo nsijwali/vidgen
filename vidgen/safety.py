@@ -61,20 +61,16 @@ def _ips_for(host: str) -> list[ipaddress._BaseAddress]:
     return out
 
 
-def check_http_url(url: str, allow_private: bool) -> None:
-    """Allow http(s) URLs. Link-local and cloud-metadata addresses are always refused; loopback and
-    private ranges only with allow_private (a local dev server is a normal thing to capture)."""
-    u = urlparse(url)
-    if u.scheme not in ("http", "https"):
-        raise UnsafeInput(f"only http(s) URLs can be captured: {url}")
-    host = u.hostname
-    if not host:
-        raise UnsafeInput(f"URL has no host: {url}")
+def pinned_ips(host: str, allow_private: bool) -> list[str]:
+    """Resolve `host` once, validate every address, and return the addresses that may be connected to.
+
+    Callers must connect to a returned address, not re-resolve the name (that is the DNS-rebinding gap)."""
     if host.lower() in ("metadata.google.internal", "metadata"):
         raise UnsafeInput(f"cloud metadata host refused: {host}")
     ips = _ips_for(host)
     if not ips:
         raise UnsafeInput(f"cannot resolve host: {host}")
+    out: list[str] = []
     for ip in ips:
         if getattr(ip, "ipv4_mapped", None):
             ip = ip.ipv4_mapped
@@ -86,6 +82,18 @@ def check_http_url(url: str, allow_private: bool) -> None:
                     f"{host} resolves to a private or loopback address ({ip}). "
                     "To capture a local dev server pass --allow-private-hosts (or set it in your user config)."
                 )
-            continue
-        if ip.is_reserved:
+        elif ip.is_reserved:
             raise UnsafeInput(f"{host} resolves to a reserved address ({ip}); refused")
+        out.append(str(ip))
+    return out
+
+
+def check_http_url(url: str, allow_private: bool) -> None:
+    """Allow http(s) URLs. Link-local and cloud-metadata addresses are always refused; loopback and
+    private ranges only with allow_private (a local dev server is a normal thing to capture)."""
+    u = urlparse(url)
+    if u.scheme not in ("http", "https"):
+        raise UnsafeInput(f"only http(s) URLs can be captured: {url}")
+    if not u.hostname:
+        raise UnsafeInput(f"URL has no host: {url}")
+    pinned_ips(u.hostname, allow_private)

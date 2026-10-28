@@ -404,3 +404,85 @@ def test_output_dir_from_a_spec_cannot_escape(tmp_path, monkeypatch):
     with pytest.raises(SystemExit):
         main(["render", str(spec), "--format", "landscape", "--fps", "5"])
     assert not target.exists()
+
+
+# --- DNS-rebinding defence: the pinning proxy ------------------------------------------------------------
+
+def _http_server(body: bytes = b"hello"):
+    import http.server, threading
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200); self.send_header("Content-Length", str(len(body))); self.end_headers()
+            self.wfile.write(body)
+        def log_message(self, *a): pass
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
+def _via_proxy(proxy_url: str, target: str) -> bytes:
+    import socket
+    from urllib.parse import urlsplit
+    ph = urlsplit(proxy_url)
+    with socket.create_connection((ph.hostname, ph.port), timeout=5) as s:
+        s.sendall(f"GET {target} HTTP/1.1\r\nHost: x\r\n\r\n".encode())
+        data = b""
+        while chunk := s.recv(4096):
+            data += chunk
+    return data
+
+
+def test_pinning_proxy_refuses_private_targets_by_default():
+    from vidgen.pinproxy import PinningProxy
+    srv = _http_server()
+    try:
+        with PinningProxy(allow_private=False) as px:
+            assert b" 403 " in _via_proxy(px.url, f"http://127.0.0.1:{srv.server_address[1]}/").split(b"\r\n")[0] + b" "
+        with PinningProxy(allow_private=True) as px:
+            assert _via_proxy(px.url, f"http://127.0.0.1:{srv.server_address[1]}/").endswith(b"hello")
+    finally:
+        srv.shutdown()
+
+
+def test_pinning_proxy_connects_to_the_address_it_validated(monkeypatch):
+    """A name that resolves to a public address for the check must not be re-resolved to an internal one."""
+    from vidgen import safety
+    from vidgen.pinproxy import PinningProxy
+    srv = _http_server()
+    answers = iter([["93.184.216.34"], ["127.0.0.1"]])  # rebinding DNS: public first, then loopback
+    monkeypatch.setattr(safety, "_ips_for", lambda host: [__import__("ipaddress").ip_address(a) for a in next(answers)])
+    seen = []
+    import vidgen.pinproxy as pp
+    real = pp.socket.create_connection
+
+    def fake(addr, timeout=None):
+        if addr[0] == "93.184.216.34":
+            seen.append(addr)
+            raise OSError("stop")
+        return real(addr, timeout=timeout)
+
+    monkeypatch.setattr(pp.socket, "create_connection", fake)
+    try:
+        with PinningProxy(allow_private=False) as px:
+            _via_proxy(px.url, f"http://rebind.test:{srv.server_address[1]}/")
+        assert seen == [("93.184.216.34", srv.server_address[1])]  # one resolution, pinned address used
+    finally:
+        srv.shutdown()
+
+
+def test_capture_of_local_server_works_through_the_proxy(tmp_path):
+    pytest.importorskip("playwright")
+    from vidgen.shots import load_shot
+    srv = _http_server(b"<html><body style='background:#c00'>ok</body></html>")
+    try:
+        with pytest.raises(CaptureError):
+            load_shot(f"http://127.0.0.1:{srv.server_address[1]}/", {"viewport": [400, 300], "scale": 1}, tmp_path, tmp_path, [tmp_path], allow_private=False)
+        try:
+            im = load_shot(f"http://127.0.0.1:{srv.server_address[1]}/", {"viewport": [400, 300], "scale": 1}, tmp_path, tmp_path, [tmp_path], allow_private=True)
+        except CaptureError as e:
+            pytest.skip(f"chromium unavailable: {e}")
+        assert im.getpixel((10, 10))[0] > 150
+    finally:
+        srv.shutdown()
