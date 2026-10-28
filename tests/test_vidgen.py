@@ -367,10 +367,10 @@ def test_oversized_spec_file_is_rejected(tmp_path):
 
 def test_cli_end_to_end_with_config(home, capsys):
     write(home / "work" / "vidgen.config.yaml", {"watermark": "Cfg Name", "formats": ["square"],
-                                                 "music": {"style": "none"}, "output_dir": str(home / "o")})
+                                                 "music": {"style": "none"}, "output_dir": "o"})
     spec = write(home / "work" / "v.yaml", {"scenes": [{"type": "title", "title": "Hi", "seconds": 1}]})
     assert main(["render", str(spec), "--preview"]) == 0
-    assert (home / "o" / "square" / "video.mp4").exists()
+    assert (home / "work" / "o" / "square" / "video.mp4").exists()
     assert main(["config", "show"]) == 0
     assert "Cfg Name" in capsys.readouterr().out
     assert main(["render", str(spec), "--fps", "999"]) == 1
@@ -381,3 +381,26 @@ def test_config_init_writes_a_loadable_starter(home):
     assert main(["config", "init"]) == 2                       # will not overwrite
     cfg = load_config()
     assert cfg.data["theme"] == "sumi"
+
+
+def test_music_file_that_is_really_a_playlist_is_refused(tmp_path):
+    """ffmpeg sniffs content: a .mp3 holding an ffconcat script must not be demuxed as a playlist."""
+    import wave
+    with wave.open(str(tmp_path / "real.wav"), "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(8000); w.writeframes(b"\0\0" * 8000)
+    (tmp_path / "evil.mp3").write_text("ffconcat version 1.0\nfile real.wav\n")
+    spec = tmp_path / "s.yaml"
+    spec.write_text("music: {style: evil.mp3}\nscenes:\n  - {type: title, title: hi, seconds: 2}\n")
+    rc = main(["render", str(spec), "--out", str(tmp_path / "o"), "--format", "landscape", "--fps", "5"])
+    assert rc != 0
+    assert not (tmp_path / "o" / "landscape" / "video.mp4").exists() or rc != 0
+
+
+def test_output_dir_from_a_spec_cannot_escape(tmp_path, monkeypatch):
+    spec = tmp_path / "s.yaml"
+    target = tmp_path.parent / "elsewhere"
+    spec.write_text(f"output_dir: {target}\nscenes:\n  - {{type: title, title: hi, seconds: 2}}\n")
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit):
+        main(["render", str(spec), "--format", "landscape", "--fps", "5"])
+    assert not target.exists()

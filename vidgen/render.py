@@ -223,6 +223,9 @@ def share_copy(spec: dict[str, Any], total: float, fmt_list: list[str]) -> tuple
     return f"Title: {title}\n\nDescription:\n{desc}\n", warns
 
 
+AUDIO_FORMATS = "wav,mp3,ogg,flac,mov,aac,matroska,webm"
+
+
 def render(spec: dict[str, Any], fmt: str, out_dir: Path, fps: int = 30, scale: float = 1.0,
            music_override: str | None = None, contact: bool = True,
            runtime: Runtime | None = None) -> dict[str, Any]:
@@ -247,7 +250,9 @@ def render(spec: dict[str, Any], fmt: str, out_dir: Path, fps: int = 30, scale: 
         cmd = ["ffmpeg", "-loglevel", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24",
                "-s", f"{W}x{H}", "-r", str(fps), "-i", "-"]
         if audio:
-            cmd += ["-i", str(audio)]
+            # ffmpeg sniffs the format from content, so a file named .mp3 could really be a concat/playlist
+            # script that pulls in other files. Only accept real audio containers, local files only.
+            cmd += ["-protocol_whitelist", "file", "-format_whitelist", AUDIO_FORMATS, "-i", str(audio)]
         cmd += ["-c:v", "libx264", "-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p"]
         if audio:
             vol = float(spec["music"].get("volume", 0.9))

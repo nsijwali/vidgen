@@ -35,6 +35,21 @@ def _runtime(spec: dict, cfg: Config, music_override: str | None = None) -> Runt
     return Runtime(roots=roots, allow_private_hosts=cfg.allow_private_hosts, chromium=cfg.chromium_path)
 
 
+def _confined_output_dir(spec: dict, cfg: Config) -> Path:
+    """output_dir can come from a spec or project config, which may not be yours. Without --out it must
+    stay under the spec's folder, the current folder, or a folder you passed to --allow-path."""
+    out = Path(spec["output_dir"]).expanduser()
+    out = (out if out.is_absolute() else Path.cwd() / out).resolve()
+    for root in [Path(spec["_dir"]), Path.cwd(), *cfg.allow_paths]:
+        try:
+            out.relative_to(root.expanduser().resolve())
+            return out
+        except ValueError:
+            continue
+    raise SystemExit(f"error: output_dir {out} is outside the spec folder and the current folder. "
+                     "Pass --out DIR to choose it explicitly.")
+
+
 def cmd_validate(args: argparse.Namespace) -> int:
     cfg = _config(args)
     spec = load_spec(args.spec, cfg)
@@ -47,7 +62,7 @@ def cmd_render(args: argparse.Namespace) -> int:
     cfg = _config(args)
     spec = load_spec(args.spec, cfg)
     formats = list(FORMATS) if args.format == "all" else [args.format] if args.format else spec["formats"]
-    out_dir = Path(args.out or spec["output_dir"])
+    out_dir = Path(args.out) if args.out else _confined_output_dir(spec, cfg)
     scale = 0.5 if args.preview else 1.0
     fps = 12 if args.preview else (args.fps or int(spec["fps"]))
     rt = _runtime(spec, cfg, args.music)
