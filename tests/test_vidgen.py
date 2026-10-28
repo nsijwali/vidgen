@@ -610,3 +610,21 @@ def test_narration_audio_file_is_confined_to_allowed_folders(tmp_path):
     spec.write_text(f"music: {{style: none}}\nscenes:\n  - {{type: title, title: Hi, seconds: 1, narration_audio: {outside / 'v.wav'}}}\n")
     assert main(["render", str(spec), "--out", str(work / "o"), "--format", "square", "--fps", "5"]) != 0
     assert main(["render", str(spec), "--out", str(work / "o"), "--format", "square", "--fps", "5", "--allow-path", str(outside)]) == 0
+
+
+def test_read_screen_speaks_the_text_shown_in_the_video(tmp_path):
+    from vidgen.voice import screen_text
+    assert screen_text({"type": "title", "title": "Cache stampede", "subtitle": "In 45 seconds"}) == "Cache stampede. In 45 seconds."
+    assert screen_text({"type": "bullets", "title": "Fixes", "items": ["Lock", "Jitter"], "caption": "Lock."}) == "Fixes. Lock. Jitter."
+    assert screen_text({"type": "stat", "value": "10,000", "label": "requests"}) == "10,000. requests."
+    srv, calls, url = _fake_voice_server(seconds=1.0)
+    try:
+        spec = tmp_path / "v.yaml"
+        spec.write_text("music: {style: none}\nscenes:\n  - {type: type, text: 'What is a stampede?'}\n"
+                        "  - {type: title, title: Skipped, narration: false}\n"
+                        "  - {type: title, title: Own words, narration: Custom line}\n")
+        assert main(["render", str(spec), "--out", str(tmp_path / "o"), "--format", "square", "--fps", "5",
+                     "--voice-url", url, "--read-screen"]) == 0
+    finally:
+        srv.shutdown()
+    assert [c["text"] for c in calls] == ["What is a stampede?", "Custom line"]

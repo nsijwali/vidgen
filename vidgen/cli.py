@@ -64,6 +64,8 @@ def cmd_validate(args: argparse.Namespace) -> int:
 def cmd_render(args: argparse.Namespace) -> int:
     cfg = _config(args)
     spec = load_spec(args.spec, cfg)
+    if args.read_screen:
+        spec["voiceover"] = {**spec["voiceover"], "read_screen": True}
     formats = list(FORMATS) if args.format == "all" else [args.format] if args.format else spec["formats"]
     out_dir = Path(args.out) if args.out else _confined_output_dir(spec, cfg)
     scale = 0.5 if args.preview else 1.0
@@ -134,6 +136,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="let `shot` capture localhost and private-network URLs")
     common.add_argument("--voice-url", metavar="URL",
                         help="text-to-speech server for scene narration, e.g. VoiceStudio at http://127.0.0.1:3900/mcp/")
+    common.add_argument("--read-screen", action="store_true",
+                        help="voiceover reads the text shown on screen for every scene without its own narration")
     sub = p.add_subparsers(dest="cmd", required=True)
     v = sub.add_parser("validate", parents=[common], help="check a spec without rendering")
     v.add_argument("spec")

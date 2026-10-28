@@ -73,6 +73,10 @@ scenes:
   - {type: title, title: Cache stampede, narration: "When a hot key expires, every request misses at once."}
 ```
 
+To have the voice read exactly what the viewer sees (titles, subtitles, bullets, stats, captions), turn on `read_screen`
+instead of writing narration by hand: `voiceover: {read_screen: true}` in the spec, or `--read-screen` on the command line.
+A scene's own `narration:` text wins over it, and `narration: false` keeps a scene silent.
+
 Speech is made by a local text-to-speech server you run, such as [VoiceStudio](https://github.com/debpalash/VoiceStudio)
 (open source, runs on your machine). Start it, then:
 

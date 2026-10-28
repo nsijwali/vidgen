@@ -162,6 +162,33 @@ def write_wav(path: Path, samples: np.ndarray) -> Path:
     return path
 
 
+def _sentence(t: str) -> str:
+    t = " ".join(str(t).split())
+    return t if not t or t[-1] in ".!?:;" else t + "."
+
+
+def screen_text(sc: dict[str, Any]) -> str:
+    """The words a viewer reads in this scene, in reading order, so the voice says what the screen shows."""
+    kind = sc["type"]
+    if kind == "title":
+        parts = [sc.get("title"), sc.get("subtitle")]
+    elif kind == "type":
+        parts = [sc.get("text")]
+    elif kind == "bullets":
+        parts = [sc.get("title"), *sc.get("items", [])]
+    elif kind == "stat":
+        parts = [sc.get("value"), sc.get("label")]
+    else:  # shot, code, diagram
+        parts = [sc.get("title")]
+    parts.append(sc.get("caption"))
+    seen: list[str] = []
+    for p in parts:
+        p = _sentence(p) if p else ""
+        if p and p not in seen:
+            seen.append(p)
+    return " ".join(seen)
+
+
 def prepare_narration(spec: dict[str, Any], server: VoiceServer | None, cache: Path,
                       resolve_audio) -> dict[int, np.ndarray]:
     """Return {scene index: samples} for every scene with narration, and stretch scene lengths to fit.
@@ -175,18 +202,21 @@ def prepare_narration(spec: dict[str, Any], server: VoiceServer | None, cache: P
     for i, sc in enumerate(spec["scenes"]):
         if sc.get("narration_audio"):
             samples = read_wav(resolve_audio(sc["narration_audio"]))
-        elif sc.get("narration"):
+        elif sc.get("narration") is not False and (sc.get("narration") or vo.get("read_screen")):
+            text = sc.get("narration") or screen_text(sc)
+            if not text:
+                continue
             if server is None:
                 raise VoiceError(
                     f"scene {i} has narration but no voice server is configured. Set voice_server.url in your "
                     "user config (vidgen config init --user) or pass --voice-url, or use narration_audio files.")
-            key = hashlib.sha256(json.dumps([sc["narration"], vo.get("voice"), vo.get("language")]).encode()).hexdigest()[:20]
+            key = hashlib.sha256(json.dumps([text, vo.get("voice"), vo.get("language")]).encode()).hexdigest()[:20]
             cached = cache / f"narration-{key}.wav"
             if not cached.exists():
                 if session is None:
                     session = _Session(server)
                     session.start()
-                audio = synthesize(session, sc["narration"], vo.get("voice"), vo.get("language"))
+                audio = synthesize(session, text, vo.get("voice"), vo.get("language"))
                 tmp = cached.with_suffix(".part")
                 tmp.write_bytes(audio)
                 try:

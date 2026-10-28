@@ -31,6 +31,7 @@ meta:
 voiceover:
   # voice: <profile id from your TTS app>     # omit to use the server's default voice
   # language: en
+  # read_screen: true       # speak the text shown on screen for scenes without their own narration
   gap: 0.5                   # seconds of pause after each narration
   music_level: 0.35
 

@@ -156,9 +156,8 @@ def validate(raw: Any, config: Config | None = None, base_dir: Path | None = Non
         sc.setdefault("seconds", DEFAULT_SECONDS[t])
         sc["seconds"] = _num(i, "seconds", sc["seconds"], 0.1, limits["max_seconds"])
         total += sc["seconds"]
-        for k in ("narration",):
-            if k in sc:
-                sc[k] = _text(f"scene {i}: {k}", sc[k])
+        if "narration" in sc and sc["narration"] is not False:
+            sc["narration"] = _text(f"scene {i}: narration", sc["narration"])
         if "narration_audio" in sc and (not isinstance(sc["narration_audio"], str) or not sc["narration_audio"].strip()):
             raise SpecError(f"scene {i}: narration_audio must be a path to a .wav file")
         for k in ("title", "text", "eyebrow", "subtitle", "url", "caption", "value", "label"):
@@ -174,11 +173,13 @@ def validate(raw: Any, config: Config | None = None, base_dir: Path | None = Non
 
 
 def _check_voiceover(v: Any) -> dict[str, Any]:
-    if not isinstance(v, dict) or set(v) - {"voice", "language", "gap", "music_level"}:
-        raise SpecError("voiceover is {voice, language, gap, music_level}")
+    if not isinstance(v, dict) or set(v) - {"voice", "language", "gap", "music_level", "read_screen"}:
+        raise SpecError("voiceover is {voice, language, gap, music_level, read_screen}")
     for k in ("voice", "language"):
         if k in v and (not isinstance(v[k], str) or not v[k].strip() or len(v[k]) > 200):
             raise SpecError(f"voiceover.{k} must be a short string")
+    if "read_screen" in v and not isinstance(v["read_screen"], bool):
+        raise SpecError("voiceover.read_screen must be true or false")
     for k, lo, hi in (("gap", 0, 10), ("music_level", 0, 1)):
         if k in v and (isinstance(v[k], bool) or not isinstance(v[k], (int, float)) or not lo <= v[k] <= hi):
             raise SpecError(f"voiceover.{k} must be a number between {lo} and {hi}")
