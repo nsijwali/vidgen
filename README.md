@@ -89,9 +89,9 @@ Open `vidgen-output/<format>/contact.png` first. To try the showcased example wi
 | Spec | What it is |
 | --- | --- |
 | [`examples/cache-stampede-45s.yaml`](examples/cache-stampede-45s.yaml) | A 45-second system-design explainer with a diagram, code and a narrated script. |
-| [`examples/vidgen-intro.yaml`](examples/vidgen-intro.yaml) | A playful one-minute video about vidgen, made with vidgen. |
 
-Both are narrated. Add `--no-voice` to render them with music only.
+It is narrated; add `--no-voice` to render it with music only. For more starting points, run
+`vidgen init` with the `system-design`, `project` or `code-tip` template.
 
 ## Commands
 
