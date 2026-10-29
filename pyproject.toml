@@ -1,6 +1,6 @@
 [project]
-name = "vidgen"
-version = "0.1.0"
+name = "yamlreel"
+version = "0.2.0"
 description = "Spec-driven generator for short project, system-design and demo videos (YouTube, Shorts, LinkedIn)."
 readme = "README.md"
 license = {text = "MIT"}
@@ -13,13 +13,14 @@ ffmpeg = ["imageio-ffmpeg>=0.5"]
 dev = ["pytest>=7"]
 
 [project.scripts]
-vidgen = "vidgen.cli:main"
+yamlreel = "yamlreel.cli:main"
+vidgen = "yamlreel.legacy:main"
 
 [tool.setuptools.packages.find]
-include = ["vidgen*"]
+include = ["yamlreel*"]
 
 [tool.setuptools.package-data]
-vidgen = ["templates/*.yaml"]
+yamlreel = ["templates/*.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

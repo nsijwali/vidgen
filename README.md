@@ -1,13 +1,13 @@
 <div align="center">
 
-# vidgen
+# yamlreel
 
 **Write a short YAML file. Get a finished video.**
 
 System-design explainers, code tips, project launches and feature demos for YouTube, Shorts and LinkedIn,
 with diagrams, typed code, original music and an optional voiceover in your own voice.
 
-[![ci](https://github.com/nsijwali/vidgen/actions/workflows/ci.yml/badge.svg)](https://github.com/nsijwali/vidgen/actions/workflows/ci.yml)
+[![ci](https://github.com/nsijwali/yamlreel/actions/workflows/ci.yml/badge.svg)](https://github.com/nsijwali/yamlreel/actions/workflows/ci.yml)
 ![python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
@@ -21,10 +21,10 @@ with diagrams, typed code, original music and an optional voiceover in your own 
 
 ## What you get
 
-Every render writes this layout (the output folder is `vidgen-output/` unless you pass `--out DIR`):
+Every render writes this layout (the output folder is `yamlreel-output/` unless you pass `--out DIR`):
 
 ```
-vidgen-output/
+yamlreel-output/
 ├── vertical/            one folder per format: landscape 1920×1080, vertical 1080×1920, square 1080×1080
 │   ├── video.mp4        H.264 (+ AAC when there is music or a voice). Frame 0 is the poster, so the thumbnail is never blank.
 │   ├── poster.jpg       the settled hook frame, ready to upload as a thumbnail
@@ -41,26 +41,26 @@ Japanese scale), so there is nothing to license or credit.
 You need **Python 3.10 or newer**. pip installs everything else except fonts on macOS and Windows (see the note below).
 
 ```bash
-git clone https://github.com/nsijwali/vidgen.git
-cd vidgen
+git clone https://github.com/nsijwali/yamlreel.git
+cd yamlreel
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e '.[ffmpeg]'
 ```
 
-> vidgen is installed from this repository. It is **not on PyPI**: `pip install vidgen` installs an unrelated project.
+> yamlreel is not on PyPI; install it from this repository.
 
 Make your first video:
 
 ```bash
-vidgen init system-design my-video.yaml     # a starter spec (or: project, code-tip)
-vidgen render my-video.yaml --preview       # half size, 12 fps: check layout and timing in seconds
-vidgen render my-video.yaml                 # full quality, every format in the spec
+yamlreel init system-design my-video.yaml     # a starter spec (or: project, code-tip)
+yamlreel render my-video.yaml --preview       # half size, 12 fps: check layout and timing in seconds
+yamlreel render my-video.yaml                 # full quality, every format in the spec
 ```
 
-Open `vidgen-output/<format>/contact.png` first. To try the showcased example without setting up a voice:
-`vidgen render examples/cache-stampede-45s.yaml --no-voice`.
+Open `yamlreel-output/<format>/contact.png` first. To try the showcased example without setting up a voice:
+`yamlreel render examples/cache-stampede-45s.yaml --no-voice`.
 
-> **Fonts on macOS and Windows:** vidgen draws text with the free DejaVu fonts, which most Linux systems
+> **Fonts on macOS and Windows:** yamlreel draws text with the free DejaVu fonts, which most Linux systems
 > include. On macOS run `brew install --cask font-dejavu` once. On Windows, install them from
 > [dejavu-fonts.github.io](https://dejavu-fonts.github.io) ("Install for me" is fine).
 
@@ -77,9 +77,9 @@ Open `vidgen-output/<format>/contact.png` first. To try the showcased example wi
 | Fonts | `brew install --cask font-dejavu` | Debian/Ubuntu: `sudo apt install fonts-dejavu-core`; Fedora: `sudo dnf install dejavu-sans-fonts dejavu-serif-fonts dejavu-sans-mono-fonts`; Arch: `sudo pacman -S ttf-dejavu` | DejaVu from [dejavu-fonts.github.io](https://dejavu-fonts.github.io) |
 | Web captures (optional) | `pip install -e '.[capture]'` then `playwright install chromium` | same | same |
 
-- **ffmpeg:** vidgen uses the `ffmpeg` on your PATH if there is one, and otherwise the copy that the `[ffmpeg]` extra (the `imageio-ffmpeg` package) brings along. You only need one of them.
-- **Fonts:** vidgen looks in your `font_dir` setting (or `VIDGEN_FONT_DIR`) first, then the system font folders, then your own (`~/Library/Fonts` on macOS, `%LOCALAPPDATA%\Microsoft\Windows\Fonts` on Windows). If your fonts live anywhere else, point `font_dir` at that folder. Japanese text uses Noto CJK when it is installed.
-- **Web captures** are only needed for `shot` scenes that screenshot a URL. `chromium_path` in your user config (or `VIDGEN_CHROMIUM`) picks a different browser.
+- **ffmpeg:** yamlreel uses the `ffmpeg` on your PATH if there is one, and otherwise the copy that the `[ffmpeg]` extra (the `imageio-ffmpeg` package) brings along. You only need one of them.
+- **Fonts:** yamlreel looks in your `font_dir` setting (or `YAMLREEL_FONT_DIR`) first, then the system font folders, then your own (`~/Library/Fonts` on macOS, `%LOCALAPPDATA%\Microsoft\Windows\Fonts` on Windows). If your fonts live anywhere else, point `font_dir` at that folder. Japanese text uses Noto CJK when it is installed.
+- **Web captures** are only needed for `shot` scenes that screenshot a URL. `chromium_path` in your user config (or `YAMLREEL_CHROMIUM`) picks a different browser.
 - **Windows** is not covered by CI yet. Reports are welcome.
 
 </details>
@@ -91,17 +91,17 @@ Open `vidgen-output/<format>/contact.png` first. To try the showcased example wi
 | [`examples/cache-stampede-45s.yaml`](examples/cache-stampede-45s.yaml) | A 45-second system-design explainer with a diagram, code and a narrated script. |
 
 It is narrated; add `--no-voice` to render it with music only. For more starting points, run
-`vidgen init` with the `system-design`, `project` or `code-tip` template.
+`yamlreel init` with the `system-design`, `project` or `code-tip` template.
 
 ## Commands
 
 | Command | What it does |
 | --- | --- |
-| `vidgen init <template> <file>` | Writes a starter spec: `system-design`, `project` or `code-tip`. |
-| `vidgen validate <spec>` | Checks a spec and prints its scene count and length, without rendering. |
-| `vidgen render <spec>` | Renders. Useful flags: `--preview`, `--out DIR`, `--format vertical\|landscape\|square\|all`, `--music koto\|none\|file.mp3`, `--fps N`, `--no-voice`, `--voice-url URL`, `--read-screen`, `--allow-path DIR`, `--allow-private-hosts`. |
-| `vidgen config init [--user]` / `config show` | Writes a starter config, or shows the merged settings and the files they came from. |
-| `vidgen music --seconds 30 --out track.wav` | Generates the music track on its own (`--bpm`, `--root`, `--scale`, `--seed`). |
+| `yamlreel init <template> <file>` | Writes a starter spec: `system-design`, `project` or `code-tip`. |
+| `yamlreel validate <spec>` | Checks a spec and prints its scene count and length, without rendering. |
+| `yamlreel render <spec>` | Renders. Useful flags: `--preview`, `--out DIR`, `--format vertical\|landscape\|square\|all`, `--music koto\|none\|file.mp3`, `--fps N`, `--no-voice`, `--voice-url URL`, `--read-screen`, `--allow-path DIR`, `--allow-private-hosts`. |
+| `yamlreel config init [--user]` / `config show` | Writes a starter config, or shows the merged settings and the files they came from. |
+| `yamlreel music --seconds 30 --out track.wav` | Generates the music track on its own (`--bpm`, `--root`, `--scale`, `--seed`). |
 
 ## Writing a spec
 
@@ -165,7 +165,7 @@ scenes: [...]
 
 ## Voiceover in your own voice
 
-Give a scene a `narration:` line and vidgen speaks it, lowers the music under the voice, and makes the scene as
+Give a scene a `narration:` line and yamlreel speaks it, lowers the music under the voice, and makes the scene as
 long as the speech needs. Speech comes from a text-to-speech server running **on your own machine**, for example
 [VoiceStudio](https://github.com/debpalash/VoiceStudio), which can also clone your voice from a short recording.
 
@@ -197,8 +197,8 @@ scenes:
    model (about 2.3 GB).
 3. **(Optional) Clone your voice.** In *Voice cloning*, add a 5 to 10 second recording of yourself in a quiet
    room, with its exact transcript. Copy the voice's **profile id**.
-4. **Tell vidgen where the server is, once.** Run `vidgen config init --user` and open
-   `~/.config/vidgen/config.yaml`. At the bottom, uncomment `voice_server:` and its `url:` line. Under the
+4. **Tell yamlreel where the server is, once.** Run `yamlreel config init --user` and open
+   `~/.config/yamlreel/config.yaml`. At the bottom, uncomment `voice_server:` and its `url:` line. Under the
    existing `voiceover:` block, uncomment `voice:` and paste your profile id there (leave it out to use the
    server's default voice). You can also pass `--voice-url http://127.0.0.1:3900/mcp/` on each render.
 
@@ -212,7 +212,7 @@ folder) instead of `narration:`.
 
 <br>
 
-- **Any compatible server works.** vidgen speaks MCP "Streamable HTTP" and calls the server's `generate_speech` tool, which must return the audio inline (VoiceStudio's default). VoiceStudio is just one server that does this.
+- **Any compatible server works.** yamlreel speaks MCP "Streamable HTTP" and calls the server's `generate_speech` tool, which must return the audio inline (VoiceStudio's default). VoiceStudio is just one server that does this.
 - **Privacy:** narration text is sent only to the server you configured. A spec cannot choose the server: the address comes only from your user config or the command line.
 - **Precedence:** a scene's own `narration:` wins over `read_screen`, and `narration: false` keeps a scene silent.
 - **Caching:** audio is cached per text and voice in `<output folder>/.cache`, so re-renders do not speak lines again. If you change the recording behind a voice, delete `<output folder>/.cache/narration-*.wav`.
@@ -223,12 +223,12 @@ folder) instead of `narration:`.
 ## Configuration
 
 Defaults live in a config file, so a spec only needs to say what is different for that video. You can adapt
-vidgen to your own name, colours and music without touching code.
+yamlreel to your own name, colours and music without touching code.
 
 ```bash
-vidgen config init            # ./vidgen.config.yaml: this project (add it to your .gitignore)
-vidgen config init --user     # ~/.config/vidgen/config.yaml: every project
-vidgen config show            # the merged settings, and the files they came from
+yamlreel config init            # ./yamlreel.config.yaml: this project (add it to your .gitignore)
+yamlreel config init --user     # ~/.config/yamlreel/config.yaml: every project
+yamlreel config show            # the merged settings, and the files they came from
 ```
 
 Settings apply in this order, lowest to highest: **built-in defaults → user config → project config → the spec → command-line flags**.
@@ -237,9 +237,9 @@ Nested settings merge, so setting only `music.bpm` keeps the rest. `meta.tags`, 
 What you can set: `theme`, your own `themes` (colours, `extends`, `display: serif | sans`, `frame`), `formats`,
 `fps`, `output_dir`, `watermark` (text or a logo), `music`, `voiceover`, `meta` defaults and `limits`. Your name,
 watermark and default tags belong in config, not in code. Every option is explained in
-[`vidgen/templates/config.example.yaml`](vidgen/templates/config.example.yaml).
+[`yamlreel/templates/config.example.yaml`](yamlreel/templates/config.example.yaml).
 
-A few settings widen what a spec can touch, so vidgen only reads them from your **user** config or the command
+A few settings widen what a spec can touch, so yamlreel only reads them from your **user** config or the command
 line, never from a spec or project config you downloaded: `allow_paths`, `allow_private_hosts`,
 `chromium_path`, `font_dir` and `voice_server`. See [SECURITY.md](SECURITY.md).
 
@@ -253,7 +253,7 @@ line, never from a spec or project config you downloaded: `allow_paths`, `allow_
 | `cannot reach the voice server … Is VoiceStudio running?` | Start VoiceStudio and check that the URL ends in `/mcp/`. |
 | `Client error '403 Forbidden' for url '…/generate'` | Accept the OmniVoice and tokenizer licences in VoiceStudio's Model Catalogue. |
 | `Server error '500'` from the voice server, or the server is killed | The machine is out of memory. Close other apps, and use a 5 to 10 second voice sample: a longer reference needs over 2 GB on the CPU. |
-| `voice server reply had no audio` | VoiceStudio is set to `OMNIVOICE_MCP_OUTPUT_MODE=files`. vidgen needs the default inline mode. |
+| `voice server reply had no audio` | VoiceStudio is set to `OMNIVOICE_MCP_OUTPUT_MODE=files`. yamlreel needs the default inline mode. |
 | `capturing a URL needs playwright` | `pip install -e '.[capture]'`, then `playwright install chromium`. |
 | `could not capture … Executable doesn't exist` | Run `playwright install chromium`, or set `chromium_path` in your user config. |
 | `… outside the folders this run may read` | Move the file next to your spec, or pass `--allow-path DIR`. For localhost pages, add `--allow-private-hosts`. |
@@ -269,10 +269,10 @@ line, never from a spec or project config you downloaded: `allow_paths`, `allow_
 | [Playwright](https://playwright.dev/python/) | capturing web pages for `shot` scenes (optional) |
 | [DejaVu fonts](https://dejavu-fonts.github.io) | all on-screen text |
 | [VoiceStudio](https://github.com/debpalash/VoiceStudio) with [OmniVoice](https://huggingface.co/k2-fsa/OmniVoice) | the optional local voiceover, including voice cloning (not bundled) |
-| [Claude Code](https://claude.com/claude-code) | building, testing and reviewing vidgen |
+| [Claude Code](https://claude.com/claude-code) | building, testing and reviewing yamlreel |
 
 If you publish a video voiced with OmniVoice, credit it and keep it non-commercial: its licence (CC-BY-NC)
-requires both, and VoiceStudio's audio tokenizer has its own terms (see *Licences* above). vidgen puts a
+requires both, and VoiceStudio's audio tokenizer has its own terms (see *Licences* above). yamlreel puts a
 spec's `meta.credits` into `share-copy.txt` for you.
 
 ## Development
@@ -285,9 +285,15 @@ pytest -q
 Tests never read your own user or project config. Checks that need `ffprobe`, Playwright or Chromium are skipped
 when those tools are missing. CI runs on Ubuntu with Python 3.10 and 3.12.
 
+## Renamed from vidgen
+
+> **Renamed from vidgen (0.2.0).** `git pull` (optionally `git remote set-url origin https://github.com/nsijwali/yamlreel.git`; GitHub redirects the old URL), then with your venv active (or using `.venv/bin/pip`): `pip uninstall -y vidgen && rm -rf vidgen.egg-info vidgen/ && pip install -e '.[ffmpeg]'`.
+> Move `~/.config/vidgen/` (or `$XDG_CONFIG_HOME/vidgen/` if set; the old user config is still read, and trusted, until you move it) to `~/.config/yamlreel/` and `vidgen.config.yaml` to `yamlreel.config.yaml`, rename `VIDGEN_*` env vars to `YAMLREEL_*`, and optionally `mv vidgen-output yamlreel-output` to keep the narration cache.
+> The old names keep working with a warning until 0.3.0. If VoiceStudio binds a voice to client `vidgen`, set `voice_server.client_id: vidgen` or rebind it.
+
 ## Security and licence
 
 Specs are treated as untrusted input. File access is confined, URL captures are checked, and settings that widen
 access come only from you. [SECURITY.md](SECURITY.md) covers the details and how to report a vulnerability.
 
-vidgen is [MIT licensed](LICENSE). Tools you pair it with keep their own licences.
+yamlreel is [MIT licensed](LICENSE). Tools you pair it with keep their own licences.

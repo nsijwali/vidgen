@@ -1,4 +1,4 @@
-"""Command line interface: vidgen render|validate|init|config|music."""
+"""Command line interface: yamlreel render|validate|init|config|music."""
 from __future__ import annotations
 
 import argparse
@@ -9,7 +9,8 @@ from pathlib import Path
 
 import yaml
 
-from .config import Config, ConfigError, load_config, user_config_path
+from . import legacy
+from .config import CONFIG_FILENAME, config_base, Config, ConfigError, load_config, user_config_path
 from .voice import VoiceError, VoiceServer
 from .render import RenderError, Runtime, render, share_copy
 from .safety import UnsafeInput
@@ -19,7 +20,7 @@ from .theme import FontError, set_font_dirs
 
 
 def _templates() -> list[str]:
-    root = resources.files("vidgen") / "templates"
+    root = resources.files("yamlreel") / "templates"
     return sorted(p.name[:-5] for p in root.iterdir() if p.name.endswith(".yaml") and not p.name.startswith("config"))
 
 
@@ -99,7 +100,7 @@ def _copy_template(name: str, dest: Path, force: bool) -> int:
         print(f"{dest} exists; pass --force to overwrite", file=sys.stderr)
         return 2
     dest.parent.mkdir(parents=True, exist_ok=True)
-    with resources.as_file(resources.files("vidgen") / "templates" / f"{name}.yaml") as src:
+    with resources.as_file(resources.files("yamlreel") / "templates" / f"{name}.yaml") as src:
         shutil.copyfile(src, dest)
     print(f"wrote {dest}")
     return 0
@@ -115,7 +116,12 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 def cmd_config(args: argparse.Namespace) -> int:
     if args.action == "init":
-        dest = user_config_path() if args.user else Path("vidgen.config.yaml")
+        dest = user_config_path() if args.user else Path(CONFIG_FILENAME)
+        if args.user and not args.force:
+            conflict = legacy.user_config_conflict(Path(config_base()), dest)
+            if conflict:
+                print(conflict, file=sys.stderr)
+                return 2
         return _copy_template("config.example", dest, args.force)
     cfg = _config(args)
     shown = dict(cfg.data)
@@ -134,9 +140,9 @@ def cmd_music(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(prog="vidgen", description="Render short videos from a YAML spec.")
+    p = argparse.ArgumentParser(prog="yamlreel", description="Render short videos from a YAML spec.")
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--config", help="project config file (default: ./vidgen.config.yaml)")
+    common.add_argument("--config", help="project config file (default: ./yamlreel.config.yaml)")
     common.add_argument("--allow-path", action="append", default=[], metavar="DIR",
                         help="also let the spec read images, pages and music from DIR (repeatable)")
     common.add_argument("--allow-private-hosts", action="store_true",
@@ -166,7 +172,7 @@ def main(argv: list[str] | None = None) -> int:
     i.set_defaults(fn=cmd_init)
     c = sub.add_parser("config", parents=[common], help="show the effective config, or write a starter config file")
     c.add_argument("action", choices=["show", "init"])
-    c.add_argument("--user", action="store_true", help="with init: write the user config (~/.config/vidgen/config.yaml)")
+    c.add_argument("--user", action="store_true", help="with init: write the user config (~/.config/yamlreel/config.yaml)")
     c.add_argument("--force", action="store_true")
     c.set_defaults(fn=cmd_config)
     m = sub.add_parser("music", help="generate the koto-style track on its own")
