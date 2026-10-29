@@ -18,6 +18,18 @@ from vidgen.textkit import make_block
 TEMPLATES = Path(__file__).parent.parent / "vidgen" / "templates"
 
 
+@pytest.fixture(autouse=True)
+def no_personal_config(tmp_path_factory, monkeypatch):
+    """Never read the developer's own settings: their ~/.config/vidgen/config.yaml, a ./vidgen.config.yaml in the
+    folder pytest runs from, or VIDGEN_* overrides (a voice server or theme there would leak into tests).
+    Tests that need a config set it up themselves."""
+    empty = tmp_path_factory.mktemp("no-config")
+    monkeypatch.setenv("VIDGEN_CONFIG", str(empty / "config.yaml"))
+    monkeypatch.delenv("VIDGEN_FONT_DIR", raising=False)
+    monkeypatch.delenv("VIDGEN_CHROMIUM", raising=False)
+    monkeypatch.chdir(empty)
+
+
 def skip_without_ffprobe():
     """Some ffmpeg builds (static pip wheels) ship without ffprobe; only the stream checks need it, not vidgen."""
     if shutil.which("ffprobe") is None:
@@ -699,3 +711,49 @@ def test_cli_reports_a_missing_font_without_a_traceback(home, monkeypatch, capsy
     finally:
         theme._load.cache_clear()
     assert capsys.readouterr().err.startswith("error: font 'DejaVu")
+
+
+def test_ffmpeg_falls_back_to_the_pip_build(monkeypatch):
+    import sys
+    import types
+    from vidgen import render as render_mod
+    monkeypatch.setattr(render_mod.shutil, "which", lambda name: None)
+    fake = types.SimpleNamespace(get_ffmpeg_exe=lambda: "/pip/ffmpeg")
+    monkeypatch.setitem(sys.modules, "imageio_ffmpeg", fake)
+    assert render_mod.ffmpeg_exe() == "/pip/ffmpeg"
+
+
+def test_missing_ffmpeg_says_how_to_install_it(tmp_path, monkeypatch):
+    import sys
+    from vidgen import render as render_mod
+    monkeypatch.setattr(render_mod.shutil, "which", lambda name: None)
+    monkeypatch.setitem(sys.modules, "imageio_ffmpeg", None)  # import fails
+    with pytest.raises(RenderError, match="pip install imageio-ffmpeg"):
+        render(spec_of({"type": "title", "title": "x", "seconds": 1}), "square", tmp_path)
+
+
+def test_ffmpeg_that_cannot_start_is_a_clear_error(tmp_path, monkeypatch):
+    from vidgen import render as render_mod
+    monkeypatch.setattr(render_mod, "ffmpeg_exe", lambda: str(tmp_path / "no-such-ffmpeg"))
+    with pytest.raises(RenderError, match="cannot run ffmpeg"):
+        render(spec_of({"type": "title", "title": "x", "seconds": 1}, music={"style": "none"}), "square", tmp_path,
+               fps=5, scale=0.25, contact=False)
+
+
+def test_no_voice_renders_a_narrated_spec_without_a_voice_server(tmp_path, capsys):
+    spec = tmp_path / "v.yaml"
+    spec.write_text("music: {style: none}\nvoiceover: {read_screen: true}\nscenes:\n"
+                    "  - {type: title, title: Hi, seconds: 1, narration: Words}\n")
+    args = ["render", str(spec), "--out", str(tmp_path / "o"), "--format", "square", "--fps", "5"]
+    assert main(args) == 1  # narration needs a voice server...
+    assert "--no-voice" in capsys.readouterr().err  # ...and the error says how to skip it
+    assert main([*args, "--no-voice"]) == 0
+    assert (tmp_path / "o" / "square" / "video.mp4").exists()
+    assert main([*args, "--no-voice", "--read-screen"]) == 1
+    assert "cannot be used together" in capsys.readouterr().err
+
+
+def test_bad_voice_url_is_a_clear_error(tmp_path, capsys):
+    spec = write(tmp_path / "v.yaml", {"scenes": [{"type": "title", "title": "Hi", "seconds": 1}]})
+    assert main(["render", str(spec), "--out", str(tmp_path / "o"), "--voice-url", "ftp://x"]) == 1
+    assert capsys.readouterr().err.startswith("error: voice_server.url must be an http(s) URL")

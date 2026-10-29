@@ -10,7 +10,7 @@ from pathlib import Path
 import yaml
 
 from .config import Config, ConfigError, load_config, user_config_path
-from .voice import VoiceServer
+from .voice import VoiceError, VoiceServer
 from .render import RenderError, Runtime, render, share_copy
 from .safety import UnsafeInput
 from .shots import CaptureError
@@ -30,11 +30,11 @@ def _config(args: argparse.Namespace) -> Config:
     return cfg
 
 
-def _runtime(spec: dict, cfg: Config, music_override: str | None = None) -> Runtime:
+def _runtime(spec: dict, cfg: Config, music_override: str | None = None, no_voice: bool = False) -> Runtime:
     roots = [Path(spec["_dir"]), *[p.parent for p in cfg.sources], *cfg.allow_paths]
     if music_override and music_override not in ("koto", "none"):
         roots.append(Path(music_override).expanduser().resolve().parent)  # named on the command line: trusted
-    voice = VoiceServer(**cfg.voice_server) if cfg.voice_server else None
+    voice = VoiceServer(**cfg.voice_server) if cfg.voice_server and not no_voice else None
     return Runtime(roots=roots, allow_private_hosts=cfg.allow_private_hosts, chromium=cfg.chromium_path, voice=voice)
 
 
@@ -64,13 +64,20 @@ def cmd_validate(args: argparse.Namespace) -> int:
 def cmd_render(args: argparse.Namespace) -> int:
     cfg = _config(args)
     spec = load_spec(args.spec, cfg)
-    if args.read_screen:
+    if args.no_voice and args.read_screen:
+        raise ValueError("--no-voice and --read-screen cannot be used together")
+    if args.no_voice:
+        for sc in spec["scenes"]:
+            sc.pop("narration", None)
+            sc.pop("narration_audio", None)
+        spec["voiceover"] = {**spec["voiceover"], "read_screen": False}
+    elif args.read_screen:
         spec["voiceover"] = {**spec["voiceover"], "read_screen": True}
     formats = list(FORMATS) if args.format == "all" else [args.format] if args.format else spec["formats"]
     out_dir = Path(args.out) if args.out else _confined_output_dir(spec, cfg)
     scale = 0.5 if args.preview else 1.0
     fps = 12 if args.preview else (args.fps or int(spec["fps"]))
-    rt = _runtime(spec, cfg, args.music)
+    rt = _runtime(spec, cfg, args.music, no_voice=args.no_voice)
     results = {}
     for fmt in formats:
         print(f"rendering {fmt} ...", flush=True)
@@ -148,6 +155,8 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--format", choices=[*FORMATS, "all"], help="override the spec's formats")
     r.add_argument("--music", help="koto, none, or a path to an audio file (overrides the spec)")
     r.add_argument("--fps", type=int, help="frames per second, 1-60 (default: fps from config)")
+    r.add_argument("--no-voice", action="store_true",
+                   help="skip all narration (music only); no text-to-speech server needed")
     r.add_argument("--preview", action="store_true", help="half size, 12 fps: fast look at timing and layout")
     r.set_defaults(fn=cmd_render)
     i = sub.add_parser("init", help="write a starter spec")
@@ -171,7 +180,7 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
     try:
         return args.fn(args)
-    except (SpecError, ConfigError, RenderError, CaptureError, UnsafeInput, FontError, ValueError) as e:
+    except (SpecError, ConfigError, RenderError, CaptureError, UnsafeInput, FontError, VoiceError, ValueError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
 

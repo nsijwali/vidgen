@@ -50,6 +50,10 @@ _FONT_DIRS = [
     "/usr/share/fonts/truetype/dejavu",
     "/usr/share/fonts/opentype/noto",
     "/usr/share/fonts/truetype/noto",
+    "/usr/share/fonts/dejavu-sans-fonts",       # Fedora
+    "/usr/share/fonts/dejavu-serif-fonts",
+    "/usr/share/fonts/dejavu-sans-mono-fonts",
+    "/usr/share/fonts/TTF",                     # Arch
     "/Library/Fonts",
     "/System/Library/Fonts/Supplemental",
     "C:/Windows/Fonts",
@@ -141,7 +145,10 @@ def _load(kind: str, size: int) -> ImageFont.FreeTypeFont:
     path = _find(_FONT_FILES[kind])
     if path is None:
         raise FontError(
-            f"font {_FONT_FILES[kind]!r} not found; install DejaVu fonts, or set font_dir in your user config or VIDGEN_FONT_DIR"
+            f"font {_FONT_FILES[kind]!r} not found. Install DejaVu fonts (macOS: brew install --cask "
+            "font-dejavu; Debian/Ubuntu: sudo apt install fonts-dejavu-core; Fedora: sudo dnf install dejavu-sans-fonts "
+            "dejavu-serif-fonts dejavu-sans-mono-fonts; Arch: sudo pacman -S ttf-dejavu), or point font_dir in your user config (or VIDGEN_FONT_DIR) "
+            "at a folder that holds them"
         )
     return ImageFont.truetype(path, size)
 

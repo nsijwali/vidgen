@@ -2,8 +2,8 @@
 # Render: vidgen render examples/cache-stampede-45s.yaml --out out --voice-url http://127.0.0.1:3900/mcp/
 # Every scene but the end card has its own `narration:`, so the voice explains the idea instead of reading
 # the screen. Narration needs a TTS server: pass --voice-url or set voice_server.url in your user config
-# (vidgen config init --user). Without one, render stops with an error. The end card's `narration: false`
-# keeps it silent even with --read-screen.
+# (vidgen config init --user). Without one, render stops with an error; add --no-voice for a music-only cut.
+# The end card's `narration: false` keeps it silent even with --read-screen.
 meta:
   title: Cache stampede explained in 45 seconds
   description: Why one expired cache key can take down your database, and how to stop

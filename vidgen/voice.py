@@ -209,7 +209,8 @@ def prepare_narration(spec: dict[str, Any], server: VoiceServer | None, cache: P
             if server is None:
                 raise VoiceError(
                     f"scene {i} has narration but no voice server is configured. Set voice_server.url in your "
-                    "user config (vidgen config init --user) or pass --voice-url, or use narration_audio files.")
+                    "user config (vidgen config init --user) or pass --voice-url, use narration_audio files, or "
+                    "render with --no-voice for music only.")
             key = hashlib.sha256(json.dumps([text, vo.get("voice"), vo.get("language")]).encode()).hexdigest()[:20]
             cached = cache / f"narration-{key}.wav"
             if not cached.exists():

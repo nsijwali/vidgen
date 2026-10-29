@@ -9,6 +9,7 @@ dependencies = ["pillow>=10", "numpy>=1.24", "pyyaml>=6"]
 
 [project.optional-dependencies]
 capture = ["playwright>=1.40"]
+ffmpeg = ["imageio-ffmpeg>=0.5"]
 dev = ["pytest>=7"]
 
 [project.scripts]

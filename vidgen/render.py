@@ -228,11 +228,26 @@ def share_copy(spec: dict[str, Any], total: float, fmt_list: list[str]) -> tuple
 AUDIO_FORMATS = "wav,mp3,ogg,flac,mov,aac,matroska,webm"
 
 
+def ffmpeg_exe() -> str | None:
+    """ffmpeg on PATH, else the static build from the optional imageio-ffmpeg package (`pip install imageio-ffmpeg`,
+    or the `ffmpeg` extra), which works where no system package is available."""
+    path = shutil.which("ffmpeg")
+    if path:
+        return path
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except (ImportError, RuntimeError):
+        return None
+
+
 def render(spec: dict[str, Any], fmt: str, out_dir: Path, fps: int = 30, scale: float = 1.0,
            music_override: str | None = None, contact: bool = True,
            runtime: Runtime | None = None) -> dict[str, Any]:
-    if shutil.which("ffmpeg") is None:
-        raise RenderError("ffmpeg not found on PATH")
+    ffmpeg = ffmpeg_exe()
+    if ffmpeg is None:
+        raise RenderError("ffmpeg not found. Install it (macOS: brew install ffmpeg; Debian/Ubuntu: sudo apt install "
+                          "ffmpeg) or run: pip install imageio-ffmpeg")
     if not 1 <= fps <= 60:
         raise RenderError("fps must be between 1 and 60")
     rt = runtime or Runtime.for_spec(spec)
@@ -258,7 +273,7 @@ def render(spec: dict[str, Any], fmt: str, out_dir: Path, fps: int = 30, scale: 
         poster.convert("RGB").save(out / "poster.jpg", quality=92)
 
         W, H = tl.ctx.W, tl.ctx.H
-        cmd = ["ffmpeg", "-loglevel", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24",
+        cmd = [ffmpeg, "-loglevel", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24",
                "-s", f"{W}x{H}", "-r", str(fps), "-i", "-"]
         # Audio inputs, in order: music (optional), narration (optional). Input 0 is the video.
         inputs: list[Path] = [a for a in (audio, narration) if a]
@@ -285,7 +300,11 @@ def render(spec: dict[str, Any], fmt: str, out_dir: Path, fps: int = 30, scale: 
             cmd += ["-c:a", "aac", "-b:a", "192k", "-ac", "2"]
         cmd += ["-movflags", "+faststart", "-t", f"{total:.3f}", str(out / "video.mp4")]
         errlog = open(work / "ffmpeg.log", "wb")
-        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=errlog)
+        try:
+            proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=errlog)
+        except OSError as e:
+            errlog.close()
+            raise RenderError(f"cannot run ffmpeg at {ffmpeg}: {e}") from e
         try:
             n_frames = int(round(total * fps))
             for n in range(n_frames):

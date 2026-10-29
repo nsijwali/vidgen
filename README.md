@@ -1,109 +1,269 @@
+<div align="center">
+
 # vidgen
 
-Turn a short YAML spec into a finished video: MP4, poster frame, a contact sheet to review it, and ready-to-paste title, description and hashtags. It is not tied to any one app. Use it for a project launch, a system-design explainer, a code tip or a feature demo, as a YouTube video, a YouTube Short or a LinkedIn clip.
+**Write a short YAML file. Get a finished video.**
+
+System-design explainers, code tips, project launches and feature demos for YouTube, Shorts and LinkedIn,
+with diagrams, typed code, original music and an optional voiceover in your own voice.
+
+[![ci](https://github.com/nsijwali/vidgen/actions/workflows/ci.yml/badge.svg)](https://github.com/nsijwali/vidgen/actions/workflows/ci.yml)
+![python](https://img.shields.io/badge/python-3.10%2B-blue)
+![license](https://img.shields.io/badge/license-MIT-green)
+
+<img src="docs/preview.jpg" alt="Contact sheet of a rendered video: a typed hook, a cache diagram, bullet lists, highlighted code, a big stat and an end card" width="820">
+
+<sub>Every scene of <a href="examples/cache-stampede-45s.yaml">examples/cache-stampede-45s.yaml</a>, rendered from one YAML file.</sub>
+
+</div>
+
+---
+
+## What you get
+
+Every render writes this layout (the output folder is `vidgen-output/` unless you pass `--out DIR`):
+
+```
+vidgen-output/
+├── vertical/            one folder per format: landscape 1920×1080, vertical 1080×1920, square 1080×1080
+│   ├── video.mp4        H.264 (+ AAC when there is music or a voice). Frame 0 is the poster, so the thumbnail is never blank.
+│   ├── poster.jpg       the settled hook frame, ready to upload as a thumbnail
+│   └── contact.png      two labelled stills per scene: look at this before you publish
+└── share-copy.txt       title, description and hashtags for the whole video, ready to paste
+```
+
+`share-copy.txt` adds `#Shorts` for vertical clips up to 60 seconds. Videos can be any length, and only a
+vertical video over 3 minutes gets a warning. Music is generated on your machine (plucked strings in a
+Japanese scale), so there is nothing to license or credit.
+
+## Quick start
+
+You need **Python 3.10 or newer**. pip installs everything else except fonts on macOS and Windows (see the note below).
 
 ```bash
-pip install -e .                      # pillow, numpy, pyyaml
-pip install playwright && playwright install chromium   # only if a scene captures a URL
-vidgen init system-design cache.yaml  # or: project, code-tip
-vidgen render cache.yaml --preview    # half size, 12 fps: check layout and timing fast
-vidgen render cache.yaml --out out    # full quality, every format in the spec
-vidgen render page.yaml --allow-private-hosts   # needed to capture localhost or LAN URLs
+git clone https://github.com/nsijwali/vidgen.git
+cd vidgen
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e '.[ffmpeg]'
 ```
 
-Output, per format (`landscape` 1920x1080, `vertical` 1080x1920, `square` 1080x1080):
+> vidgen is installed from this repository. It is **not on PyPI**: `pip install vidgen` installs an unrelated project.
 
-```
-out/vertical/video.mp4     H.264 + AAC, 30 fps, frame 0 is the poster so the thumbnail is never blank
-out/vertical/poster.jpg    the settled hook frame
-out/vertical/contact.png   two stills per scene, labelled: look at this before you publish
-out/share-copy.txt         title, description, hashtags (adds #Shorts for vertical clips up to 60s; length is unlimited, only a vertical video over 3 minutes gets a warning)
+Make your first video:
+
+```bash
+vidgen init system-design my-video.yaml     # a starter spec (or: project, code-tip)
+vidgen render my-video.yaml --preview       # half size, 12 fps: check layout and timing in seconds
+vidgen render my-video.yaml                 # full quality, every format in the spec
 ```
 
-## Spec
+Open `vidgen-output/<format>/contact.png` first. To try the showcased example without setting up a voice:
+`vidgen render examples/cache-stampede-45s.yaml --no-voice`.
+
+> **Fonts on macOS and Windows:** vidgen draws text with the free DejaVu fonts, which most Linux systems
+> include. On macOS run `brew install --cask font-dejavu` once. On Windows, install them from
+> [dejavu-fonts.github.io](https://dejavu-fonts.github.io) ("Install for me" is fine).
+
+<details>
+<summary><b>Install details for each system</b></summary>
+
+<br>
+
+| | macOS | Linux | Windows (PowerShell) |
+| --- | --- | --- | --- |
+| Python 3.10+ | `brew install python@3.12` or [python.org](https://www.python.org/downloads/) | usually installed; Debian/Ubuntu also need `python3-venv` | [python.org](https://www.python.org/downloads/), then use `py` instead of `python3` |
+| Activate the venv | `source .venv/bin/activate` | same | `.venv\Scripts\Activate.ps1` (if scripts are blocked: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`) |
+| ffmpeg | the `[ffmpeg]` extra (or `brew install ffmpeg`) | the extra, or `sudo apt install ffmpeg`. On Fedora use the extra: its own `ffmpeg-free` cannot encode H.264 | the `[ffmpeg]` extra |
+| Fonts | `brew install --cask font-dejavu` | Debian/Ubuntu: `sudo apt install fonts-dejavu-core`; Fedora: `sudo dnf install dejavu-sans-fonts dejavu-serif-fonts dejavu-sans-mono-fonts`; Arch: `sudo pacman -S ttf-dejavu` | DejaVu from [dejavu-fonts.github.io](https://dejavu-fonts.github.io) |
+| Web captures (optional) | `pip install -e '.[capture]'` then `playwright install chromium` | same | same |
+
+- **ffmpeg:** vidgen uses the `ffmpeg` on your PATH if there is one, and otherwise the copy that the `[ffmpeg]` extra (the `imageio-ffmpeg` package) brings along. You only need one of them.
+- **Fonts:** vidgen looks in your `font_dir` setting (or `VIDGEN_FONT_DIR`) first, then the system font folders, then your own (`~/Library/Fonts` on macOS, `%LOCALAPPDATA%\Microsoft\Windows\Fonts` on Windows). If your fonts live anywhere else, point `font_dir` at that folder. Japanese text uses Noto CJK when it is installed.
+- **Web captures** are only needed for `shot` scenes that screenshot a URL. `chromium_path` in your user config (or `VIDGEN_CHROMIUM`) picks a different browser.
+- **Windows** is not covered by CI yet. Reports are welcome.
+
+</details>
+
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| `vidgen init <template> <file>` | Writes a starter spec: `system-design`, `project` or `code-tip`. |
+| `vidgen validate <spec>` | Checks a spec and prints its scene count and length, without rendering. |
+| `vidgen render <spec>` | Renders. Useful flags: `--preview`, `--out DIR`, `--format vertical\|landscape\|square\|all`, `--music koto\|none\|file.mp3`, `--fps N`, `--no-voice`, `--voice-url URL`, `--read-screen`, `--allow-path DIR`, `--allow-private-hosts`. |
+| `vidgen config init [--user]` / `config show` | Writes a starter config, or shows the merged settings and the files they came from. |
+| `vidgen music --seconds 30 --out track.wav` | Generates the music track on its own (`--bpm`, `--root`, `--scale`, `--seed`). |
+
+## Writing a spec
+
+A spec is a list of scenes. Each scene has a `type`, how many `seconds` it lasts, and an optional `caption`
+(a lower third that fades in).
+
+```yaml
+meta: {title: "Cache stampede in 45 seconds", tags: [systemdesign, caching]}
+theme: midnight                     # sumi | washi | midnight | your own
+formats: [vertical, landscape]
+scenes:
+  - type: type
+    text: What is a cache stampede?
+    seconds: 3
+  - type: bullets
+    title: The fix
+    items: [Let one request rebuild the key, Serve stale while it refreshes, Add jitter to every TTL]
+  - type: stat
+    value: "10,000 → 1"
+    label: database queries per expiry
+```
+
+| Scene | Shows | Main fields |
+| --- | --- | --- |
+| `title` | eyebrow, title, subtitle and URL, easing in line by line | `title`, `eyebrow`, `subtitle`, `url` |
+| `type` | one line typed out with a cursor: your hook | `text` |
+| `bullets` | points that appear one at a time | `title`, `items` |
+| `code` | code typed on screen, with highlighted lines | `code`, `highlight`, `title` |
+| `stat` | one big number or phrase | `value`, `label`, `eyebrow` |
+| `diagram` | boxes and arrows that appear in order, packets flowing, nodes flashing | `nodes`, `edges`, `flash`, `title` |
+| `shot` | a screenshot of a URL or an image, with a slow camera move | `source`, `zoom`, `focus`, `fit`, `click`, `scroll_y` |
+
+<details>
+<summary><b>All spec options</b></summary>
+
+<br>
 
 ```yaml
 meta: {title, description, tags: [], links: [], credits: []}
-theme: sumi | washi | midnight
-formats: [vertical, landscape]
+theme: sumi | washi | midnight | <a theme from your config>
+formats: [vertical, landscape, square]
 music: {style: koto | none | path/to.mp3, bpm: 72, root: D, scale: hirajoshi, seed: 7, snap: false, volume: 0.9}
-watermark: "Your Name"      # or {text|image: logo.png, position: top-left|top-right|bottom-left|bottom-right, opacity: 0.75, size: 30}
-poster: {scene: 0, at: 2.6}      # optional; default is the first scene, just before it ends
+watermark: "Your Name"        # or {text|image: logo.png, position: top-left|top-right|bottom-left|bottom-right, opacity: 0.75, size: 30}
+poster: {scene: 0, at: 2.6}   # optional; default is the first scene, just before it ends
+voiceover: {voice, language, gap, music_level, read_screen}
 scenes: [...]
 ```
 
-Every scene takes `seconds` and an optional `caption` (a lower-third that fades in).
+- **Diagrams:** `nodes` take `id, label, kind (client|service|cache|db), x, y, at`, where `x` and `y` are fractions of the frame. `vx, vy` override them in vertical frames, so one diagram fits both shapes. `edges` take `from, to, label, bad, dashed, at, color` and `flash` takes `node, at, text, color`.
+- **Shots:** `source` (URL or image), `fit: cover | card`, `zoom: [from, to]`, `focus: [x, y]`, `focus_to`, `click: [selectors]`, `scroll_y`, `wait_ms`, `viewport`, `scale`. Screenshots are cached in `<output folder>/.cache`; delete it to capture again.
+- **Files:** images, pages, music and logos must sit in the spec's folder, a config folder, or a folder you allow with `--allow-path DIR` (or `allow_paths` in your user config).
+- **Music:** `seed` changes the melody and `snap: true` rounds scene lengths to beats. To use your own track, point `style` at an audio file and credit it in `meta.credits`.
+- **Watermark:** appears on every frame and the poster. The default corner is bottom-right for landscape and top-left for vertical, because the Shorts buttons cover the right edge and the bottom.
 
-| type | what it shows | key fields |
-| --- | --- | --- |
-| `title` | eyebrow, title, subtitle, URL; eases in line by line | `title`, `eyebrow`, `subtitle`, `url` |
-| `type` | one line typed out with a cursor: the hook | `text` |
-| `shot` | screenshot of a URL or an image, slow camera move | `source`, `zoom: [from, to]`, `focus: [x, y]`, `focus_to`, `fit: cover\|card`, `click: [selectors]`, `scroll_y`, `wait_ms`, `viewport` |
-| `diagram` | boxes and arrows that reveal in order, packets flow along arrows, nodes flash state | `nodes` (`id, label, kind: client\|service\|cache\|db, x, y, vx, vy`), `edges` (`from, to, label, bad, dashed, at`), `flash` (`node, at, text`), `title` |
-| `bullets` | points that appear one at a time | `items`, `title` |
-| `code` | code typed on screen, lines highlighted | `code`, `highlight: [line numbers]`, `title` |
-| `stat` | one big number or phrase | `value`, `label`, `eyebrow` |
+</details>
 
-Coordinates `x, y` are fractions of the frame. In vertical frames, `vx, vy` override them so one diagram can be laid out for both shapes.
+**Tips**
+- Text never silently overflows. It wraps, then shrinks, and `render` warns you when it had to.
+- In vertical frames, content sits above the lower third, clear of the Shorts UI.
+- A 15-second video carries one idea. Before you publish, check anything you simplified.
+
+## Voiceover in your own voice
+
+Give a scene a `narration:` line and vidgen speaks it, lowers the music under the voice, and makes the scene as
+long as the speech needs. Speech comes from a text-to-speech server running **on your own machine**, for example
+[VoiceStudio](https://github.com/debpalash/VoiceStudio), which can also clone your voice from a short recording.
+
+```yaml
+scenes:
+  - type: type
+    text: What is a cache stampede?
+    narration: Ever seen one expired cache key take down a whole database? That's a cache stampede.
+  - type: title
+    title: Cache stampede
+    narration: false          # silent end card
+```
+
+> **Write narration, don't read the screen.** The voice sounds natural when it *explains* what the viewer sees,
+> in a sentence or two. `read_screen: true` (or `--read-screen`) speaks every title, bullet and caption word
+> for word, for scenes without their own `narration:`. That is fine as a quick draft, but it sounds robotic in a
+> finished video. `--no-voice` renders any spec with music only.
+
+<details>
+<summary><b>Set up VoiceStudio, step by step</b></summary>
+
+<br>
+
+1. **Install and open VoiceStudio.** Use the [desktop app](https://github.com/debpalash/VoiceStudio/releases/latest)
+   (easiest), or run it from source (`uv sync`, then `uv run uvicorn main:app --app-dir backend --port 3900`).
+   Its speech server listens on `http://127.0.0.1:3900/mcp/` while it is running.
+2. **Accept the model licences.** Open *Model Catalogue* and accept the terms for **OmniVoice** and its audio
+   tokenizer. Until you do, every request fails with `403 Forbidden`. The first request also downloads the
+   model (about 2.3 GB).
+3. **(Optional) Clone your voice.** In *Voice cloning*, add a 5 to 10 second recording of yourself in a quiet
+   room, with its exact transcript. Copy the voice's **profile id**.
+4. **Tell vidgen where the server is, once.** Run `vidgen config init --user` and open
+   `~/.config/vidgen/config.yaml`. At the bottom, uncomment `voice_server:` and its `url:` line. Under the
+   existing `voiceover:` block, uncomment `voice:` and paste your profile id there (leave it out to use the
+   server's default voice). You can also pass `--voice-url http://127.0.0.1:3900/mcp/` on each render.
+
+Prefer to record yourself? Use `narration_audio: clip.wav` (PCM WAV, inside the spec folder or an allowed
+folder) instead of `narration:`.
+
+</details>
+
+<details>
+<summary><b>How voiceover works: other servers, privacy, caching</b></summary>
+
+<br>
+
+- **Any compatible server works.** vidgen speaks MCP "Streamable HTTP" and calls the server's `generate_speech` tool, which must return the audio inline (VoiceStudio's default). VoiceStudio is just one server that does this.
+- **Privacy:** narration text is sent only to the server you configured. A spec cannot choose the server: the address comes only from your user config or the command line.
+- **Precedence:** a scene's own `narration:` wins over `read_screen`, and `narration: false` keeps a scene silent.
+- **Caching:** audio is cached per text and voice in `<output folder>/.cache`, so re-renders do not speak lines again. If you change the recording behind a voice, delete `<output folder>/.cache/narration-*.wav`.
+- **Licences:** VoiceStudio is AGPL-3.0, and its models have their own licences, which its Model Catalogue shows per model. OmniVoice's weights are non-commercial (CC-BY-NC), and that may carry over to the speech they generate. Check before you monetise a video.
+
+</details>
 
 ## Configuration
 
-Defaults for everything live in a config file, so a spec only has to say what is different for that video. Anyone can adapt vidgen to their own name, colours and music without touching code.
+Defaults live in a config file, so a spec only needs to say what is different for that video. You can adapt
+vidgen to your own name, colours and music without touching code.
 
 ```bash
-vidgen config init            # writes ./vidgen.config.yaml (this project)
-vidgen config init --user     # writes ~/.config/vidgen/config.yaml (every project)
-vidgen config show            # the effective, merged settings and where each layer came from
+vidgen config init            # ./vidgen.config.yaml: this project (add it to your .gitignore)
+vidgen config init --user     # ~/.config/vidgen/config.yaml: every project
+vidgen config show            # the merged settings, and the files they came from
 ```
 
-Precedence, lowest to highest: built-in defaults, user config, project config, the spec, command-line flags. Nested settings merge (set only `music.bpm` and the rest stay), and `meta.tags`, `links` and `credits` are added together across layers.
+Settings apply in this order, lowest to highest: **built-in defaults → user config → project config → the spec → command-line flags**.
+Nested settings merge, so setting only `music.bpm` keeps the rest. `meta.tags`, `links` and `credits` add up across layers.
 
-What you can set: `theme`, your own `themes` (colours, `extends`, serif or sans, frame), `formats`, `fps`, `output_dir`, `watermark` (text or logo), `music` (style, bpm, root, scale, seed, volume, snap), `meta` defaults and `limits`. See `vidgen/templates/config.example.yaml`.
+What you can set: `theme`, your own `themes` (colours, `extends`, `display: serif | sans`, `frame`), `formats`,
+`fps`, `output_dir`, `watermark` (text or a logo), `music`, `voiceover`, `meta` defaults and `limits`. Your name,
+watermark and default tags belong in config, not in code. Every option is explained in
+[`vidgen/templates/config.example.yaml`](vidgen/templates/config.example.yaml).
 
-A few settings widen what a spec can touch, so they are only read from the **user** config or the command line: `allow_paths`, `allow_private_hosts`, `chromium_path`, `font_dir`. A project config or a spec you downloaded cannot set them. See [SECURITY.md](SECURITY.md).
+A few settings widen what a spec can touch, so vidgen only reads them from your **user** config or the command
+line, never from a spec or project config you downloaded: `allow_paths`, `allow_private_hosts`,
+`chromium_path`, `font_dir` and `voice_server`. See [SECURITY.md](SECURITY.md).
 
-## Voiceover
+## Troubleshooting
 
-Add `narration` to any scene and vidgen speaks it, mixes it over the music (which dips under the voice), and makes the
-scene as long as the speech needs.
+| You see | Fix |
+| --- | --- |
+| `ffmpeg not found` | `pip install imageio-ffmpeg` (or `pip install -e '.[ffmpeg]'` in your checkout), or install ffmpeg with your package manager. |
+| `font 'DejaVuSans-Bold.ttf' not found` | Install DejaVu (see *Install details*), or point `font_dir` in your user config at the folder that holds them. |
+| `scene 0 has narration but no voice server is configured` | Start VoiceStudio and set `voice_server` in your user config, pass `--voice-url`, or render with `--no-voice`. |
+| `cannot reach the voice server … Is VoiceStudio running?` | Start VoiceStudio and check that the URL ends in `/mcp/`. |
+| `Client error '403 Forbidden' for url '…/generate'` | Accept the OmniVoice and tokenizer licences in VoiceStudio's Model Catalogue. |
+| `Server error '500'` from the voice server, or the server is killed | The machine is out of memory. Close other apps, and use a 5 to 10 second voice sample: a longer reference needs over 2 GB on the CPU. |
+| `voice server reply had no audio` | VoiceStudio is set to `OMNIVOICE_MCP_OUTPUT_MODE=files`. vidgen needs the default inline mode. |
+| `capturing a URL needs playwright` | `pip install -e '.[capture]'`, then `playwright install chromium`. |
+| `could not capture … Executable doesn't exist` | Run `playwright install chromium`, or set `chromium_path` in your user config. |
+| `… outside the folders this run may read` | Move the file next to your spec, or pass `--allow-path DIR`. For localhost pages, add `--allow-private-hosts`. |
+| A narration line still uses an old voice | Delete `<output folder>/.cache/narration-*.wav`. |
+| Homebrew fails to build ffmpeg or Python | Older macOS versions get no prebuilt packages. Use the `[ffmpeg]` extra for ffmpeg, and [python.org](https://www.python.org/downloads/) or `uv` for Python. |
 
-```yaml
-voiceover: {language: en}          # optional: voice profile, language, gap, music_level
-scenes:
-  - {type: title, title: Cache stampede, narration: "When a hot key expires, every request misses at once."}
-```
-
-To have the voice read exactly what the viewer sees (titles, subtitles, bullets, stats, captions), turn on `read_screen`
-instead of writing narration by hand: `voiceover: {read_screen: true}` in the spec, or `--read-screen` on the command line.
-A scene's own `narration:` text wins over it, and `narration: false` keeps a scene silent.
-
-Speech is made by a local text-to-speech server you run, such as [VoiceStudio](https://github.com/debpalash/VoiceStudio)
-(open source, runs on your machine). Start it, then:
+## Development
 
 ```bash
-vidgen render spec.yaml --voice-url http://127.0.0.1:3900/mcp/
-# or set it once in ~/.config/vidgen/config.yaml:  voice_server: {url: http://127.0.0.1:3900/mcp/}
+pip install -e '.[dev,ffmpeg]'
+pytest -q
 ```
 
-vidgen talks MCP "Streamable HTTP" and calls the server's `generate_speech` tool, which must return audio inline (VoiceStudio's
-default). Audio is cached per text and voice, so re-renders do not re-speak. Narration text is sent only to the server you
-configured; the server address can be set only in the user config or on the command line, never by a spec. Prefer recording
-your own? Use `narration_audio: clip.wav` instead (PCM WAV, inside the spec folder or an allowed folder).
-VoiceStudio is AGPL-3.0 and its models have their own licences; check them before commercial use.
+Tests never read your own user or project config. Checks that need `ffprobe`, Playwright or Chromium are skipped
+when those tools are missing. CI runs on Ubuntu with Python 3.10 and 3.12.
 
-## Notes
+## Security and licence
 
-- **Personal details stay in config.** Nothing about any author is built in: put your watermark and default tags in `vidgen.config.yaml` (git-ignored by default).
-- **Watermark**: on every frame and the poster. Default corner is bottom-right for landscape and top-left for vertical, because the Shorts buttons cover the right edge and the bottom. Use `image:` for a logo.
-- **Music** is generated here (plucked strings in a Japanese scale, drone, reverb), so there is nothing to license or credit. `seed` changes the melody. `snap: true` rounds scene lengths to beats. Point `music.style` at an audio file to use your own track; then credit it in `meta.credits`.
-- **Text never silently overflows**: it wraps, then shrinks, and `render` prints a warning when it had to.
-- **Screenshots** are cached in `<out>/.cache`; delete it to recapture.
-- **Captions sit clear of the Shorts UI** in vertical frames (content is centred above the lower third).
-- Fonts: DejaVu (and Noto CJK for Japanese text), looked up in `font_dir` from your user config (or `VIDGEN_FONT_DIR`) first, then the system font folders, then your own (`~/Library/Fonts` on macOS, where `brew install --cask font-dejavu` puts them; `%LOCALAPPDATA%\Microsoft\Windows\Fonts` on Windows). `chromium_path` (or `VIDGEN_CHROMIUM`) picks the browser for captures.
-- Review before publishing: a 15-second video carries one idea, so check anything you simplified.
+Specs are treated as untrusted input. File access is confined, URL captures are checked, and settings that widen
+access come only from you. [SECURITY.md](SECURITY.md) covers the details and how to report a vulnerability.
 
-## Tests
-
-```bash
-pip install -e '.[dev]' && pytest
-```
+vidgen is [MIT licensed](LICENSE). Tools you pair it with keep their own licences.
