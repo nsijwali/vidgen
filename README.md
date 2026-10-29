@@ -11,6 +11,10 @@ with diagrams, typed code, original music and an optional voiceover in your own 
 ![python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
+<img src="docs/demo.gif" alt="A diagram building itself: a YAML spec and VoiceStudio feed yamlreel, which hands frames and audio to ffmpeg to produce the video" width="720">
+
+**▶ [Watch the 1-minute demo](https://github.com/nsijwali/yamlreel/releases/tag/v0.2.0)**: a video about yamlreel, made by yamlreel from one YAML file, with no video editor.
+
 <img src="docs/preview.jpg" alt="Contact sheet of a rendered video: a typed hook, a cache diagram, bullet lists, highlighted code, a big stat and an end card" width="820">
 
 <sub>Every scene of <a href="examples/cache-stampede-45s.yaml">examples/cache-stampede-45s.yaml</a>, rendered from one YAML file.</sub>
