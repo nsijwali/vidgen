@@ -84,6 +84,15 @@ Open `vidgen-output/<format>/contact.png` first. To try the showcased example wi
 
 </details>
 
+## Examples
+
+| Spec | What it is |
+| --- | --- |
+| [`examples/cache-stampede-45s.yaml`](examples/cache-stampede-45s.yaml) | A 45-second system-design explainer with a diagram, code and a narrated script. |
+| [`examples/vidgen-intro.yaml`](examples/vidgen-intro.yaml) | A playful one-minute video about vidgen, made with vidgen. |
+
+Both are narrated. Add `--no-voice` to render them with music only.
+
 ## Commands
 
 | Command | What it does |
@@ -250,6 +259,21 @@ line, never from a spec or project config you downloaded: `allow_paths`, `allow_
 | `… outside the folders this run may read` | Move the file next to your spec, or pass `--allow-path DIR`. For localhost pages, add `--allow-private-hosts`. |
 | A narration line still uses an old voice | Delete `<output folder>/.cache/narration-*.wav`. |
 | Homebrew fails to build ffmpeg or Python | Older macOS versions get no prebuilt packages. Use the `[ffmpeg]` extra for ffmpeg, and [python.org](https://www.python.org/downloads/) or `uv` for Python. |
+
+## Built with
+
+| | Used for |
+| --- | --- |
+| [Pillow](https://python-pillow.org), [NumPy](https://numpy.org), [PyYAML](https://pyyaml.org) | drawing every frame, generating the music, reading specs |
+| [FFmpeg](https://ffmpeg.org) (or [imageio-ffmpeg](https://github.com/imageio/imageio-ffmpeg)) | encoding the video |
+| [Playwright](https://playwright.dev/python/) | capturing web pages for `shot` scenes (optional) |
+| [DejaVu fonts](https://dejavu-fonts.github.io) | all on-screen text |
+| [VoiceStudio](https://github.com/debpalash/VoiceStudio) with [OmniVoice](https://huggingface.co/k2-fsa/OmniVoice) | the optional local voiceover, including voice cloning (not bundled) |
+| [Claude Code](https://claude.com/claude-code) | building, testing and reviewing vidgen |
+
+If you publish a video voiced with OmniVoice, credit it and keep it non-commercial: its licence (CC-BY-NC)
+requires both, and VoiceStudio's audio tokenizer has its own terms (see *Licences* above). vidgen puts a
+spec's `meta.credits` into `share-copy.txt` for you.
 
 ## Development
 
