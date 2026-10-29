@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/nsijwali/yamlreel/security
+    about: Please report security issues privately through the Security tab ("Report a vulnerability"), not as a public issue.

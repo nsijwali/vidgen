@@ -1,0 +1,60 @@
+name: Bug report
+description: Something did not render, crashed, or looked wrong
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. For security problems, please do not open an issue: use the Security tab instead.
+  - type: input
+    id: version
+    attributes:
+      label: yamlreel version
+      description: Output of `python -c "import yamlreel; print(yamlreel.__version__)"`.
+      placeholder: "0.2.0"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: macOS 14, Ubuntu 24.04, Windows 11
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      description: Output of `python --version`.
+      placeholder: "3.12.4"
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: Command you ran
+      placeholder: yamlreel render my-video.yaml --preview
+    validations:
+      required: true
+  - type: textarea
+    id: spec
+    attributes:
+      label: Spec
+      description: The YAML spec, or the smallest one that still shows the problem. Remove anything private.
+      render: yaml
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Full error output
+      description: Paste the whole output, not just the last line.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+    validations:
+      required: false
