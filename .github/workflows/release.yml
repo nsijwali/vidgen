@@ -1,0 +1,56 @@
+name: release
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Existing tag to publish (for example v0.2.0)
+        required: true
+        default: v0.2.0
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_REF: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ffmpeg and fonts
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core
+      - run: pip install -e '.[dev]'
+      - run: pytest -q
+      - run: pip install build
+      - run: python -m build
+      - name: Check the built version matches the tag
+        run: |
+          expected="${RELEASE_REF#v}"
+          for f in dist/*.whl dist/*.tar.gz; do
+            case "$(basename "$f")" in
+              yamlreel-"$expected"-*|yamlreel-"$expected".tar.gz) ;;
+              *) echo "::error::$f does not match tag $RELEASE_REF"; exit 1 ;;
+            esac
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
