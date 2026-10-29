@@ -5,7 +5,7 @@ meta:
   tags: [opensource, webdev]
   links: ["https://example.com"]
 theme: sumi
-# watermark: "Your Name"    # text, or {image: logo.png, position: top-left, opacity: 0.75}; or set it once in vidgen.config.yaml
+# watermark: "Your Name"    # text, or {image: logo.png, position: top-left, opacity: 0.75}; or set it once in yamlreel.config.yaml
 formats: [landscape]
 music: {style: koto, bpm: 72, seed: 7}
 scenes:

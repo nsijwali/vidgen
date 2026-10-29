@@ -2,7 +2,7 @@
 
 Speech comes from a local text-to-speech server you run yourself (VoiceStudio's MCP endpoint, by default
 http://127.0.0.1:3900/mcp/), or from audio files you recorded (`narration_audio`). The server address is a
-trusted setting: only the user config or the command line can set it, so a spec cannot make vidgen send its
+trusted setting: only the user config or the command line can set it, so a spec cannot make yamlreel send its
 text to another host.
 
 The client speaks plain MCP "Streamable HTTP" (JSON-RPC over POST) with the standard library, so it needs no
@@ -36,7 +36,7 @@ class VoiceError(RuntimeError):
 @dataclass
 class VoiceServer:
     url: str = DEFAULT_URL
-    client_id: str = "vidgen"
+    client_id: str = "yamlreel"
     timeout: float = 600.0
 
     def __post_init__(self) -> None:
@@ -90,7 +90,7 @@ class _Session:
 
     def start(self) -> None:
         self.rpc("initialize", {"protocolVersion": "2025-03-26", "capabilities": {},
-                                "clientInfo": {"name": "vidgen", "version": "1"}})
+                                "clientInfo": {"name": "yamlreel", "version": "1"}})
         self._post({"jsonrpc": "2.0", "method": "notifications/initialized"})
 
 
@@ -125,7 +125,7 @@ def synthesize(session: _Session, text: str, voice: str | None, language: str | 
     b64 = _find_wav_b64(result)
     if not b64:
         raise VoiceError("voice server reply had no audio (is OMNIVOICE_MCP_OUTPUT_MODE set to 'files'? "
-                         "vidgen needs the default inline mode)")
+                         "yamlreel needs the default inline mode)")
     return base64.b64decode(b64, validate=False)
 
 
@@ -209,7 +209,7 @@ def prepare_narration(spec: dict[str, Any], server: VoiceServer | None, cache: P
             if server is None:
                 raise VoiceError(
                     f"scene {i} has narration but no voice server is configured. Set voice_server.url in your "
-                    "user config (vidgen config init --user) or pass --voice-url, use narration_audio files, or "
+                    "user config (yamlreel config init --user) or pass --voice-url, use narration_audio files, or "
                     "render with --no-voice for music only.")
             key = hashlib.sha256(json.dumps([text, vo.get("voice"), vo.get("language")]).encode()).hexdigest()[:20]
             cached = cache / f"narration-{key}.wav"

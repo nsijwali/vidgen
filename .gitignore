@@ -6,13 +6,16 @@ __pycache__/
 build/
 dist/
 # render output and caches
-vidgen-output/
+yamlreel-output/
 .cache/
 *.mp4
 *.wav
 # personal configuration and anything that looks like a secret
-vidgen.config.yaml
+yamlreel.config.yaml
 .env
 .env.*
 *.pem
 *.key
+# pre-0.2 names
+vidgen-output/
+vidgen.config.yaml

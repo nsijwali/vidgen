@@ -4,7 +4,7 @@ meta:
   description: "A tiny pattern that removes flaky date-dependent tests."
   tags: [python, pytest, testing]
 theme: midnight
-# watermark: "Your Name"    # text, or {image: logo.png, position: top-left, opacity: 0.75}; or set it once in vidgen.config.yaml
+# watermark: "Your Name"    # text, or {image: logo.png, position: top-left, opacity: 0.75}; or set it once in yamlreel.config.yaml
 formats: [vertical]
 music: {style: koto}
 scenes:

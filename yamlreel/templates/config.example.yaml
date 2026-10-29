@@ -1,11 +1,11 @@
-# vidgen configuration. Copy to ./vidgen.config.yaml (this project) or ~/.config/vidgen/config.yaml (all projects).
+# yamlreel configuration. Copy to ./yamlreel.config.yaml (this project) or ~/.config/yamlreel/config.yaml (all projects).
 # Precedence, lowest to highest: built-in defaults < user config < project config < the spec < command-line flags.
 # Relative paths are resolved from the folder that contains the file that names them.
 
 theme: sumi                  # sumi | washi | midnight | any name under `themes:` below
 formats: [landscape]         # landscape | vertical | square
 fps: 30
-output_dir: vidgen-output
+output_dir: yamlreel-output
 
 # Shown on every frame and the poster. Remove or set to null for none.
 # watermark: "Your Name"
@@ -48,14 +48,14 @@ limits:
   max_seconds: 600           # total video length
   max_scenes: 200
 
-# --- Only read from the USER config (~/.config/vidgen/config.yaml) or the command line. ---
+# --- Only read from the USER config (~/.config/yamlreel/config.yaml) or the command line. ---
 # A project config or a spec you downloaded cannot set these.
 # allow_paths: [~/Pictures/logos]        # extra folders a spec may read images, pages and music from
 # allow_private_hosts: false             # true to let `shot` capture localhost / LAN URLs
 # chromium_path: /usr/bin/chromium       # browser used for URL captures
 # font_dir: ~/fonts                      # extra fonts folder
 
-# --- User config only (~/.config/vidgen/config.yaml or --voice-url). A spec or project config cannot set these. ---
+# --- User config only (~/.config/yamlreel/config.yaml or --voice-url). A spec or project config cannot set these. ---
 # voice_server:
 #   url: http://127.0.0.1:3900/mcp/    # VoiceStudio (or any server with an MCP `generate_speech` tool)
-#   client_id: vidgen
+#   client_id: yamlreel

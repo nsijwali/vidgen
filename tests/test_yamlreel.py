@@ -5,33 +5,41 @@ import numpy as np
 import pytest
 import yaml
 
-from vidgen import music
-from vidgen.cli import main
-from vidgen.render import RenderError, Runtime, Timeline, render, share_copy
-from vidgen.config import Config, ConfigError, load_config, merge
-from vidgen.safety import UnsafeInput, check_http_url, resolve_local
-from vidgen.shots import CaptureError
-from vidgen.specs import FORMATS, SpecError, load_spec, validate
-from vidgen.theme import get_theme
-from vidgen.textkit import make_block
+from yamlreel import legacy, music
+from yamlreel.cli import main
+from yamlreel.render import RenderError, Runtime, Timeline, render, share_copy
+from yamlreel.config import Config, ConfigError, load_config, merge
+from yamlreel.safety import UnsafeInput, check_http_url, resolve_local
+from yamlreel.shots import CaptureError
+from yamlreel.specs import FORMATS, SpecError, load_spec, validate
+from yamlreel.theme import get_theme
+from yamlreel.textkit import make_block
 
-TEMPLATES = Path(__file__).parent.parent / "vidgen" / "templates"
+TEMPLATES = Path(__file__).parent.parent / "yamlreel" / "templates"
+
+
+def isolate_env(monkeypatch, xdg):
+    """Drop every old and new override variable, point XDG_CONFIG_HOME at a tmp dir and reset warn-once."""
+    for prefix in ("YAMLREEL", legacy.LEGACY.upper()):
+        for name in ("CONFIG", "FONT_DIR", "CHROMIUM"):
+            monkeypatch.delenv(f"{prefix}_{name}", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg / "xdg"))
+    legacy._warned.clear()
 
 
 @pytest.fixture(autouse=True)
 def no_personal_config(tmp_path_factory, monkeypatch):
-    """Never read the developer's own settings: their ~/.config/vidgen/config.yaml, a ./vidgen.config.yaml in the
-    folder pytest runs from, or VIDGEN_* overrides (a voice server or theme there would leak into tests).
+    """Never read the developer's own settings: their ~/.config/yamlreel/config.yaml, a ./yamlreel.config.yaml in the
+    folder pytest runs from, or YAMLREEL_* overrides (a voice server or theme there would leak into tests).
     Tests that need a config set it up themselves."""
     empty = tmp_path_factory.mktemp("no-config")
-    monkeypatch.setenv("VIDGEN_CONFIG", str(empty / "config.yaml"))
-    monkeypatch.delenv("VIDGEN_FONT_DIR", raising=False)
-    monkeypatch.delenv("VIDGEN_CHROMIUM", raising=False)
+    isolate_env(monkeypatch, empty)
+    monkeypatch.setenv("YAMLREEL_CONFIG", str(empty / "config.yaml"))
     monkeypatch.chdir(empty)
 
 
 def skip_without_ffprobe():
-    """Some ffmpeg builds (static pip wheels) ship without ffprobe; only the stream checks need it, not vidgen."""
+    """Some ffmpeg builds (static pip wheels) ship without ffprobe; only the stream checks need it, not yamlreel."""
     if shutil.which("ffprobe") is None:
         pytest.skip("ffprobe not on PATH")
 
@@ -100,7 +108,7 @@ def test_shot_scene_from_local_image(tmp_path):
 
 
 def test_missing_screenshot_file_is_a_clear_error(tmp_path):
-    from vidgen.shots import CaptureError
+    from yamlreel.shots import CaptureError
     spec = spec_of({"type": "shot", "source": "nope.png"})
     spec["_dir"] = str(tmp_path)
     with pytest.raises(CaptureError, match="not found"):
@@ -194,9 +202,8 @@ def write(path: Path, data) -> Path:
 @pytest.fixture
 def home(tmp_path, monkeypatch):
     """An isolated user config location and working directory."""
-    monkeypatch.setenv("VIDGEN_CONFIG", str(tmp_path / "home" / "config.yaml"))
-    monkeypatch.delenv("VIDGEN_CHROMIUM", raising=False)
-    monkeypatch.delenv("VIDGEN_FONT_DIR", raising=False)
+    isolate_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("YAMLREEL_CONFIG", str(tmp_path / "home" / "config.yaml"))
     (tmp_path / "home").mkdir()
     work = tmp_path / "work"
     work.mkdir()
@@ -213,7 +220,7 @@ def test_defaults_when_there_is_no_config(home):
 def test_layers_merge_in_order_and_meta_lists_concatenate(home):
     write(home / "home" / "config.yaml", {"theme": "washi", "watermark": "User Name",
                                           "meta": {"tags": ["a"]}, "music": {"bpm": 60}})
-    write(home / "work" / "vidgen.config.yaml", {"theme": "midnight", "meta": {"tags": ["b", "a"]},
+    write(home / "work" / "yamlreel.config.yaml", {"theme": "midnight", "meta": {"tags": ["b", "a"]},
                                                  "music": {"seed": 3}})
     cfg = load_config()
     assert cfg.data["theme"] == "midnight"               # project beats user
@@ -225,11 +232,11 @@ def test_layers_merge_in_order_and_meta_lists_concatenate(home):
 
 
 def test_project_config_cannot_grant_itself_access(home):
-    write(home / "work" / "vidgen.config.yaml", {"allow_paths": ["/"]})
+    write(home / "work" / "yamlreel.config.yaml", {"allow_paths": ["/"]})
     with pytest.raises(ConfigError, match="only read from the user config"):
         load_config()
     for key, val in (("allow_private_hosts", True), ("chromium_path", "/bin/sh"), ("font_dir", "/")):
-        write(home / "work" / "vidgen.config.yaml", {key: val})
+        write(home / "work" / "yamlreel.config.yaml", {key: val})
         with pytest.raises(ConfigError):
             load_config()
     with pytest.raises(SpecError, match="not settable from a spec"):
@@ -243,24 +250,24 @@ def test_user_config_can_grant_access_and_cli_flags_add_to_it(home):
 
 
 def test_config_errors_are_clear(home):
-    write(home / "work" / "vidgen.config.yaml", {"colour": "red"})
+    write(home / "work" / "yamlreel.config.yaml", {"colour": "red"})
     with pytest.raises(ConfigError, match="unknown or not-permitted"):
         load_config()
-    (home / "work" / "vidgen.config.yaml").write_text("- a\n- b\n")
+    (home / "work" / "yamlreel.config.yaml").write_text("- a\n- b\n")
     with pytest.raises(ConfigError, match="mapping"):
         load_config()
     with pytest.raises(ConfigError, match="not found"):
         load_config(explicit=home / "nope.yaml")
-    (home / "work" / "vidgen.config.yaml").write_text("x: [")
+    (home / "work" / "yamlreel.config.yaml").write_text("x: [")
     with pytest.raises(ConfigError, match="invalid YAML"):
         load_config()
-    (home / "work" / "vidgen.config.yaml").write_text("#" * 300_000)
+    (home / "work" / "yamlreel.config.yaml").write_text("#" * 300_000)
     with pytest.raises(ConfigError, match="larger than"):
         load_config()
 
 
 def test_relative_paths_in_config_resolve_from_that_file(home):
-    write(home / "work" / "vidgen.config.yaml", {"watermark": {"image": "logo.png"}, "output_dir": "out"})
+    write(home / "work" / "yamlreel.config.yaml", {"watermark": {"image": "logo.png"}, "output_dir": "out"})
     cfg = load_config()
     assert cfg.data["watermark"]["image"] == str(home / "work" / "logo.png")
     assert cfg.data["output_dir"] == str(home / "work" / "out")
@@ -386,7 +393,7 @@ def test_oversized_spec_file_is_rejected(tmp_path):
 
 
 def test_cli_end_to_end_with_config(home, capsys):
-    write(home / "work" / "vidgen.config.yaml", {"watermark": "Cfg Name", "formats": ["square"],
+    write(home / "work" / "yamlreel.config.yaml", {"watermark": "Cfg Name", "formats": ["square"],
                                                  "music": {"style": "none"}, "output_dir": "o"})
     spec = write(home / "work" / "v.yaml", {"scenes": [{"type": "title", "title": "Hi", "seconds": 1}]})
     assert main(["render", str(spec), "--preview"]) == 0
@@ -455,7 +462,7 @@ def _via_proxy(proxy_url: str, target: str) -> bytes:
 
 
 def test_pinning_proxy_refuses_private_targets_by_default():
-    from vidgen.pinproxy import PinningProxy
+    from yamlreel.pinproxy import PinningProxy
     srv = _http_server()
     try:
         with PinningProxy(allow_private=False) as px:
@@ -468,13 +475,13 @@ def test_pinning_proxy_refuses_private_targets_by_default():
 
 def test_pinning_proxy_connects_to_the_address_it_validated(monkeypatch):
     """A name that resolves to a public address for the check must not be re-resolved to an internal one."""
-    from vidgen import safety
-    from vidgen.pinproxy import PinningProxy
+    from yamlreel import safety
+    from yamlreel.pinproxy import PinningProxy
     srv = _http_server()
     answers = iter([["93.184.216.34"], ["127.0.0.1"]])  # rebinding DNS: public first, then loopback
     monkeypatch.setattr(safety, "_ips_for", lambda host: [__import__("ipaddress").ip_address(a) for a in next(answers)])
     seen = []
-    import vidgen.pinproxy as pp
+    import yamlreel.pinproxy as pp
     real = pp.socket.create_connection
 
     def fake(addr, timeout=None):
@@ -494,7 +501,7 @@ def test_pinning_proxy_connects_to_the_address_it_validated(monkeypatch):
 
 def test_capture_of_local_server_works_through_the_proxy(tmp_path):
     pytest.importorskip("playwright")
-    from vidgen.shots import load_shot
+    from yamlreel.shots import load_shot
     srv = _http_server(b"<html><body style='background:#c00'>ok</body></html>")
     try:
         with pytest.raises(CaptureError):
@@ -617,7 +624,7 @@ def test_voice_server_error_is_reported(tmp_path, capsys):
 def test_a_spec_cannot_choose_the_voice_server(tmp_path):
     with pytest.raises(SpecError, match="voice_server"):
         validate({"voice_server": {"url": "http://evil.example/"}, "scenes": [{"type": "title", "title": "x"}]}, Config(), base_dir=tmp_path)
-    p = tmp_path / "vidgen.config.yaml"
+    p = tmp_path / "yamlreel.config.yaml"
     p.write_text("voice_server: {url: 'http://evil.example/'}\n")
     with pytest.raises(ConfigError, match="voice_server"):
         load_config(None, cwd=tmp_path)
@@ -634,7 +641,7 @@ def test_narration_audio_file_is_confined_to_allowed_folders(tmp_path):
 
 
 def test_read_screen_speaks_the_text_shown_in_the_video(tmp_path):
-    from vidgen.voice import screen_text
+    from yamlreel.voice import screen_text
     assert screen_text({"type": "title", "title": "Cache stampede", "subtitle": "In 45 seconds"}) == "Cache stampede. In 45 seconds."
     assert screen_text({"type": "bullets", "title": "Fixes", "items": ["Lock", "Jitter"], "caption": "Lock."}) == "Fixes. Lock. Jitter."
     assert screen_text({"type": "stat", "value": "10,000", "label": "requests"}) == "10,000. requests."
@@ -652,7 +659,7 @@ def test_read_screen_speaks_the_text_shown_in_the_video(tmp_path):
 
 
 def test_fonts_installed_per_user_are_found(tmp_path, monkeypatch):
-    from vidgen import theme
+    from yamlreel import theme
     fonts = tmp_path / "Library" / "Fonts"
     fonts.mkdir(parents=True)
     (fonts / "DejaVuSans.ttf").write_bytes(b"")
@@ -679,7 +686,7 @@ def test_fonts_installed_per_user_are_found(tmp_path, monkeypatch):
 def test_fonts_are_found_when_the_home_folder_cannot_be_resolved(tmp_path, monkeypatch):
     # e.g. `docker run --user 12345`: no HOME and no passwd entry
     pwd = pytest.importorskip("pwd")
-    from vidgen import theme
+    from yamlreel import theme
     monkeypatch.delenv("HOME", raising=False)
     monkeypatch.delenv("LOCALAPPDATA", raising=False)
 
@@ -692,7 +699,7 @@ def test_fonts_are_found_when_the_home_folder_cannot_be_resolved(tmp_path, monke
     monkeypatch.setattr(theme, "_EXTRA_FONT_DIRS", [])
     monkeypatch.setattr(theme, "_FONT_DIRS", [])
     assert theme._user_font_dirs() == []
-    # an unresolved '~' must never become a folder relative to where vidgen runs
+    # an unresolved '~' must never become a folder relative to where yamlreel runs
     planted = tmp_path / "cwd" / "~" / "Library" / "Fonts"
     planted.mkdir(parents=True)
     (planted / "DejaVuSans.ttf").write_bytes(b"")
@@ -701,7 +708,7 @@ def test_fonts_are_found_when_the_home_folder_cannot_be_resolved(tmp_path, monke
 
 
 def test_cli_reports_a_missing_font_without_a_traceback(home, monkeypatch, capsys):
-    from vidgen import theme
+    from yamlreel import theme
     monkeypatch.setattr(theme, "_find", lambda filename: None)
     theme._load.cache_clear()
     spec = write(home / "work" / "v.yaml", {"scenes": [{"type": "title", "title": "Hi", "seconds": 1}],
@@ -716,7 +723,7 @@ def test_cli_reports_a_missing_font_without_a_traceback(home, monkeypatch, capsy
 def test_ffmpeg_falls_back_to_the_pip_build(monkeypatch):
     import sys
     import types
-    from vidgen import render as render_mod
+    from yamlreel import render as render_mod
     monkeypatch.setattr(render_mod.shutil, "which", lambda name: None)
     fake = types.SimpleNamespace(get_ffmpeg_exe=lambda: "/pip/ffmpeg")
     monkeypatch.setitem(sys.modules, "imageio_ffmpeg", fake)
@@ -725,7 +732,7 @@ def test_ffmpeg_falls_back_to_the_pip_build(monkeypatch):
 
 def test_missing_ffmpeg_says_how_to_install_it(tmp_path, monkeypatch):
     import sys
-    from vidgen import render as render_mod
+    from yamlreel import render as render_mod
     monkeypatch.setattr(render_mod.shutil, "which", lambda name: None)
     monkeypatch.setitem(sys.modules, "imageio_ffmpeg", None)  # import fails
     with pytest.raises(RenderError, match="pip install imageio-ffmpeg"):
@@ -733,7 +740,7 @@ def test_missing_ffmpeg_says_how_to_install_it(tmp_path, monkeypatch):
 
 
 def test_ffmpeg_that_cannot_start_is_a_clear_error(tmp_path, monkeypatch):
-    from vidgen import render as render_mod
+    from yamlreel import render as render_mod
     monkeypatch.setattr(render_mod, "ffmpeg_exe", lambda: str(tmp_path / "no-such-ffmpeg"))
     with pytest.raises(RenderError, match="cannot run ffmpeg"):
         render(spec_of({"type": "title", "title": "x", "seconds": 1}, music={"style": "none"}), "square", tmp_path,
@@ -757,3 +764,23 @@ def test_bad_voice_url_is_a_clear_error(tmp_path, capsys):
     spec = write(tmp_path / "v.yaml", {"scenes": [{"type": "title", "title": "Hi", "seconds": 1}]})
     assert main(["render", str(spec), "--out", str(tmp_path / "o"), "--voice-url", "ftp://x"]) == 1
     assert capsys.readouterr().err.startswith("error: voice_server.url must be an http(s) URL")
+
+
+def test_new_names_only_print_no_deprecation(home, capsys):
+    write(home / "home" / "config.yaml", {"theme": "washi"})
+    write(home / "work" / "yamlreel.config.yaml", {"theme": "sumi"})
+    load_config()
+    assert "deprecated" not in capsys.readouterr().err
+    assert main(["config", "show"]) == 0
+    assert "deprecated" not in capsys.readouterr().err
+
+
+def test_default_names(home, monkeypatch):
+    from yamlreel.voice import VoiceServer
+    assert load_config().data["output_dir"].endswith("yamlreel-output")
+    assert VoiceServer().client_id == "yamlreel"
+    assert main(["config", "init"]) == 0
+    assert (home / "work" / "yamlreel.config.yaml").exists()
+    monkeypatch.delenv("YAMLREEL_CONFIG")
+    assert main(["config", "init", "--user"]) == 0
+    assert (home / "xdg" / "yamlreel" / "config.yaml").exists()

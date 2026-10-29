@@ -3,8 +3,11 @@
 Precedence, lowest to highest: built-in defaults < user config < project config < the spec itself.
 CLI flags override all of them.
 
-  user config     $VIDGEN_CONFIG, else $XDG_CONFIG_HOME/vidgen/config.yaml (~/.config/vidgen/config.yaml)
-  project config  --config PATH, else ./vidgen.config.yaml
+  user config     $YAMLREEL_CONFIG, else $XDG_CONFIG_HOME/yamlreel/config.yaml (~/.config/yamlreel/config.yaml)
+  project config  --config PATH, else ./yamlreel.config.yaml
+
+The pre-rename names (old env vars and config locations) still work until 0.3.0; see legacy.py.
+One file is used per slot, never a merge of old and new.
 
 Settings that widen what a spec may touch (`allow_paths`, `allow_private_hosts`, `chromium_path`) are only
 honoured from the user config or the command line. A project config or spec that you downloaded cannot
@@ -20,8 +23,10 @@ from typing import Any
 
 import yaml
 
+from . import legacy
+
 MAX_CONFIG_BYTES = 256 * 1024
-CONFIG_FILENAME = "vidgen.config.yaml"
+CONFIG_FILENAME = "yamlreel.config.yaml"
 
 # keys any config layer (and the spec) may set
 SHARED_KEYS = {"theme", "themes", "formats", "watermark", "music", "meta", "poster", "fps", "output_dir", "limits", "voiceover"}
@@ -34,7 +39,7 @@ DEFAULTS: dict[str, Any] = {
     "music": {"style": "koto", "bpm": 72, "root": "D", "scale": "hirajoshi", "seed": 7, "volume": 0.9, "snap": False},
     "meta": {"tags": [], "links": [], "credits": []},
     "fps": 30,
-    "output_dir": "vidgen-output",
+    "output_dir": "yamlreel-output",
     "limits": {"max_seconds": 600, "max_scenes": 200},
 }
 HARD_LIMITS = {"max_seconds": 3600, "max_scenes": 1000}
@@ -56,12 +61,25 @@ class Config:
     sources: list[Path] = field(default_factory=list)
 
 
+def _config_base() -> str:
+    return os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+
+
 def user_config_path() -> Path:
-    explicit = os.environ.get("VIDGEN_CONFIG")
+    """Where the user config is written (config init --user)."""
+    explicit = legacy.env("CONFIG")
     if explicit:
         return Path(explicit).expanduser()
-    base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
-    return Path(base) / "vidgen" / "config.yaml"
+    return Path(_config_base()) / "yamlreel" / "config.yaml"
+
+
+def find_user_config() -> Path:
+    """Where the user config is read from: the same path, or the pre-rename location if only that exists."""
+    explicit = legacy.env("CONFIG")
+    if explicit:
+        return Path(explicit).expanduser()
+    base = Path(_config_base())
+    return legacy.pick(base / "yamlreel" / "config.yaml", legacy.legacy_user_config(base))
 
 
 def _read(path: Path) -> dict[str, Any]:
@@ -130,11 +148,12 @@ def load_config(explicit: str | Path | None = None, cwd: Path | None = None,
                 cli_allow_paths: list[str] | None = None, cli_allow_private_hosts: bool = False,
                 cli_voice_url: str | None = None) -> Config:
     cfg = Config()
-    user = user_config_path()
+    user = find_user_config()
     layers: list[tuple[Path, bool]] = []
     if user.exists():
         layers.append((user, True))
-    project = Path(explicit).expanduser() if explicit else (cwd or Path.cwd()) / CONFIG_FILENAME
+    project = Path(explicit).expanduser() if explicit else legacy.pick((cwd or Path.cwd()) / CONFIG_FILENAME,
+                                                                  (cwd or Path.cwd()) / legacy.LEGACY_PROJECT_FILENAME)
     if explicit and not project.exists():
         raise ConfigError(f"config file not found: {project}")
     if project.exists() and (not user.exists() or project.resolve() != user.resolve()):
@@ -162,9 +181,10 @@ def load_config(explicit: str | Path | None = None, cwd: Path | None = None,
     cfg.allow_private_hosts = cfg.allow_private_hosts or cli_allow_private_hosts
     if cli_voice_url:
         cfg.voice_server = {**(cfg.voice_server or {}), "url": cli_voice_url}
-    cfg.chromium_path = cfg.chromium_path or os.environ.get("VIDGEN_CHROMIUM")
-    if os.environ.get("VIDGEN_FONT_DIR"):
-        cfg.font_dirs.append(os.environ["VIDGEN_FONT_DIR"])
+    cfg.chromium_path = cfg.chromium_path or legacy.env("CHROMIUM")
+    font_dir = legacy.env("FONT_DIR")
+    if font_dir:
+        cfg.font_dirs.append(font_dir)
     lim = cfg.data.get("limits", {})
     for k, hard in HARD_LIMITS.items():
         v = lim.get(k)

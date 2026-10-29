@@ -147,7 +147,7 @@ def _load(kind: str, size: int) -> ImageFont.FreeTypeFont:
         raise FontError(
             f"font {_FONT_FILES[kind]!r} not found. Install DejaVu fonts (macOS: brew install --cask "
             "font-dejavu; Debian/Ubuntu: sudo apt install fonts-dejavu-core; Fedora: sudo dnf install dejavu-sans-fonts "
-            "dejavu-serif-fonts dejavu-sans-mono-fonts; Arch: sudo pacman -S ttf-dejavu), or point font_dir in your user config (or VIDGEN_FONT_DIR) "
+            "dejavu-serif-fonts dejavu-sans-mono-fonts; Arch: sudo pacman -S ttf-dejavu), or point font_dir in your user config (or YAMLREEL_FONT_DIR) "
             "at a folder that holds them"
         )
     return ImageFont.truetype(path, size)

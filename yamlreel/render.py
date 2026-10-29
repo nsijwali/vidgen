@@ -254,7 +254,7 @@ def render(spec: dict[str, Any], fmt: str, out_dir: Path, fps: int = 30, scale: 
     spec = {**spec, "scenes": [dict(sc) for sc in spec["scenes"]]}  # narration stretches scene lengths: work on a copy
     out = out_dir / fmt
     out.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="vidgen-") as td:
+    with tempfile.TemporaryDirectory(prefix="yamlreel-") as td:
         work = Path(td)
         cache = out_dir / ".cache"
         cache.mkdir(parents=True, exist_ok=True)

@@ -1,4 +1,4 @@
-"""Guards for everything a spec can make vidgen read or fetch.
+"""Guards for everything a spec can make yamlreel read or fetch.
 
 A spec is data, but it names files and URLs. These checks keep a spec you did not write from reading
 arbitrary files on your machine or reaching internal network services.
