@@ -9,6 +9,7 @@ feature demos for YouTube, Shorts and LinkedIn, with diagrams, typed code, origi
 voiceover in your own voice.
 
 [![ci](https://github.com/nsijwali/yamlreel/actions/workflows/ci.yml/badge.svg)](https://github.com/nsijwali/yamlreel/actions/workflows/ci.yml)
+[![pypi](https://img.shields.io/pypi/v/yamlreel)](https://pypi.org/project/yamlreel/)
 ![python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
@@ -50,8 +51,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install "yamlreel[ffmpeg]"
 ```
 
-Prefer an isolated command-line install? `pipx install "yamlreel[ffmpeg]"` works too. (The `vidgen` package on
-PyPI is unrelated to this project, which was called vidgen before 0.2.)
+Prefer an isolated command-line install? `pipx install "yamlreel[ffmpeg]"` works too.
 
 Make your first video:
 
