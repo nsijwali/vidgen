@@ -9,7 +9,7 @@ from pathlib import Path
 
 import yaml
 
-from . import legacy
+from . import __version__, legacy
 from .config import CONFIG_FILENAME, config_base, Config, ConfigError, load_config, user_config_path
 from .voice import VoiceError, VoiceServer
 from .render import RenderError, Runtime, render, share_copy
@@ -141,6 +141,7 @@ def cmd_music(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="yamlreel", description="Render short videos from a YAML spec.")
+    p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--config", help="project config file (default: ./yamlreel.config.yaml)")
     common.add_argument("--allow-path", action="append", default=[], metavar="DIR",
