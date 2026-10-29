@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 import yaml
 
-from yamlreel import legacy, music
+from yamlreel import __version__, legacy, music
 from yamlreel.cli import main
 from yamlreel.render import RenderError, Runtime, Timeline, render, share_copy
 from yamlreel.config import Config, ConfigError, load_config, merge
@@ -146,6 +146,19 @@ def test_share_copy_adds_shorts_tag_and_warns_when_too_long():
     assert not any("Shorts" in w for w in warns)  # long landscape videos are fine
     _, warns = share_copy(spec, 200, ["vertical"])
     assert any("Shorts allow" in w for w in warns)
+
+
+def test_cli_version_exits_without_loading_config(monkeypatch, capsys):
+    def unexpected_config(*args, **kwargs):
+        pytest.fail("--version must not load configuration")
+
+    monkeypatch.setattr("yamlreel.cli.load_config", unexpected_config)
+    with pytest.raises(SystemExit) as exc:
+        main(["--version"])
+    assert exc.value.code == 0
+    captured = capsys.readouterr()
+    assert captured.out == f"yamlreel {__version__}\n"
+    assert captured.err == ""
 
 
 def test_cli_init_validate_and_overwrite_guard(tmp_path, capsys):

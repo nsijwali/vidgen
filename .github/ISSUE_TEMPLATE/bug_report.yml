@@ -10,7 +10,7 @@ body:
     id: version
     attributes:
       label: yamlreel version
-      description: Output of `python -c "import yamlreel; print(yamlreel.__version__)"`.
+      description: Output of `yamlreel --version`.
       placeholder: "0.2.0"
     validations:
       required: true

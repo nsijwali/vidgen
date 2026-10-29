@@ -105,6 +105,7 @@ It is narrated; add `--no-voice` to render it with music only. For more starting
 
 | Command | What it does |
 | --- | --- |
+| `yamlreel --version` | Prints the installed version and exits. |
 | `yamlreel init <template> <file>` | Writes a starter spec: `system-design`, `project` or `code-tip`. |
 | `yamlreel validate <spec>` | Checks a spec and prints its scene count and length, without rendering. |
 | `yamlreel render <spec>` | Renders. Useful flags: `--preview`, `--out DIR`, `--format vertical\|landscape\|square\|all`, `--music koto\|none\|file.mp3`, `--fps N`, `--no-voice`, `--voice-url URL`, `--read-screen`, `--allow-path DIR`, `--allow-private-hosts`. |
