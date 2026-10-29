@@ -5,7 +5,7 @@ yamlreel turns a YAML spec into a video. A spec names files and URLs, so it is t
 - Local images, pages, music and watermark logos must sit inside the spec's folder, the config folders, or a folder you allow with `--allow-path` (or `allow_paths` in your *user* config). Symlinks cannot escape.
 - URL captures accept `http(s)` and in-folder `file://` only. Every request the captured page makes, including redirects and sub-resources, goes through the same check. Link-local and cloud-metadata addresses are always refused. Loopback and private-network hosts need `--allow-private-hosts`.
 - `allow_paths`, `allow_private_hosts`, `chromium_path`, `font_dir` and `voice_server` cannot be set by a spec or a project config, only by the user config or the command line.
-- The user config, at its current or pre-rename location (see the README), is the only file that can set trusted keys.
+- The user config (including its pre-0.2 location, still read until 0.3.0) is the only file that can set trusted keys.
 - URL captures run through a small local pinning proxy: each host name is resolved once, every address is checked, and the browser is connected to that exact address, so DNS rebinding cannot swap in an internal address after the check.
 - Music files are only read as real audio containers (wav, mp3, ogg, flac, mp4/m4a, aac, mkv/webm), never as playlists or scripts that point at other files.
 - Without `--out`, `output_dir` from a spec or project config must stay inside the spec folder, the current folder, or an `--allow-path` folder.

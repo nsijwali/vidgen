@@ -289,12 +289,6 @@ pytest -q
 Tests never read your own user or project config. Checks that need `ffprobe`, Playwright or Chromium are skipped
 when those tools are missing. CI runs on Ubuntu with Python 3.10 and 3.12.
 
-## Renamed from vidgen
-
-> **Renamed from vidgen (0.2.0).** `git pull` (optionally `git remote set-url origin https://github.com/nsijwali/yamlreel.git`; GitHub redirects the old URL), then with your venv active (or using `.venv/bin/pip`): `pip uninstall -y vidgen && rm -rf vidgen.egg-info vidgen/ && pip install -e '.[ffmpeg]'`.
-> Move `~/.config/vidgen/` (or `$XDG_CONFIG_HOME/vidgen/` if set; the old user config is still read, and trusted, until you move it) to `~/.config/yamlreel/` and `vidgen.config.yaml` to `yamlreel.config.yaml`, rename `VIDGEN_*` env vars to `YAMLREEL_*`, and optionally `mv vidgen-output yamlreel-output` to keep the narration cache.
-> The old names keep working with a warning until 0.3.0. If VoiceStudio binds a voice to client `vidgen`, set `voice_server.client_id: vidgen` or rebind it.
-
 ## Security and licence
 
 Specs are treated as untrusted input. File access is confined, URL captures are checked, and settings that widen
