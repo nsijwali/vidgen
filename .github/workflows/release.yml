@@ -21,11 +21,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ env.RELEASE_REF }}
+          ref: refs/tags/${{ env.RELEASE_REF }}   # fully qualified: never a same-named branch
           persist-credentials: false
-      - name: Require a tag
+      - name: Require that the tag is what was checked out
         run: |
-          git rev-parse --verify --quiet "refs/tags/$RELEASE_REF" || { echo "::error::not a tag"; exit 1; }
+          tag=$(git rev-parse --verify --quiet "refs/tags/$RELEASE_REF^{commit}") || { echo "::error::not a tag"; exit 1; }
+          [ "$(git rev-parse HEAD)" = "$tag" ] || { echo "::error::checked-out commit is not tag $RELEASE_REF"; exit 1; }
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"

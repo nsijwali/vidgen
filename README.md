@@ -62,7 +62,11 @@ yamlreel render my-video.yaml                 # full quality, every format in th
 ```
 
 Open `yamlreel-output/<format>/contact.png` first. To try the showcased example without setting up a voice:
-`yamlreel render examples/cache-stampede-45s.yaml --no-voice`.
+
+```bash
+curl -LO https://raw.githubusercontent.com/nsijwali/yamlreel/main/examples/cache-stampede-45s.yaml
+yamlreel render cache-stampede-45s.yaml --no-voice
+```
 
 > **Fonts on macOS and Windows:** yamlreel draws text with the free DejaVu fonts, which most Linux systems
 > include. On macOS run `brew install --cask font-dejavu` once. On Windows, install them from
