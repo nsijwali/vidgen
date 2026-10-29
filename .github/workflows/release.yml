@@ -1,0 +1,72 @@
+name: release
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Existing tag to publish (for example v0.2.1)
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: release
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_REF: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ env.RELEASE_REF }}   # fully qualified: never a same-named branch
+          persist-credentials: false
+      - name: Require that the tag is what was checked out
+        run: |
+          tag=$(git rev-parse --verify --quiet "refs/tags/$RELEASE_REF^{commit}") || { echo "::error::not a tag"; exit 1; }
+          [ "$(git rev-parse HEAD)" = "$tag" ] || { echo "::error::checked-out commit is not tag $RELEASE_REF"; exit 1; }
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Install ffmpeg and fonts
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core
+      - run: pip install -e '.[dev]'
+      - run: pytest -q
+      - run: pip install build
+      - run: python -m build
+      - name: Check the built version matches the tag
+        run: |
+          expected="${RELEASE_REF#v}"
+          for f in dist/*.whl dist/*.tar.gz; do
+            case "$(basename "$f")" in
+              yamlreel-"$expected"-*|yamlreel-"$expected".tar.gz) ;;
+              *) echo "::error::$f does not match tag $RELEASE_REF"; exit 1 ;;
+            esac
+          done
+      - name: Smoke-test the built wheel in a fresh venv
+        run: |
+          python -m venv "$RUNNER_TEMP/smoke"
+          "$RUNNER_TEMP/smoke/bin/pip" install dist/*.whl
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/smoke/bin/yamlreel" --help
+          "$RUNNER_TEMP/smoke/bin/yamlreel" init system-design s.yaml
+          "$RUNNER_TEMP/smoke/bin/yamlreel" validate s.yaml
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3

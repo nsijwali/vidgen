@@ -4,20 +4,21 @@
 
 **Write a short YAML file. Get a finished video.**
 
-System-design explainers, code tips, project launches and feature demos for YouTube, Shorts and LinkedIn,
-with diagrams, typed code, original music and an optional voiceover in your own voice.
+yamlreel turns a YAML file into a finished video: system-design explainers, code tips, project launches and
+feature demos for YouTube, Shorts and LinkedIn, with diagrams, typed code, original music and an optional
+voiceover in your own voice.
 
 [![ci](https://github.com/nsijwali/yamlreel/actions/workflows/ci.yml/badge.svg)](https://github.com/nsijwali/yamlreel/actions/workflows/ci.yml)
 ![python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-<img src="docs/demo.gif" alt="A diagram building itself: a YAML spec and VoiceStudio feed yamlreel, which hands frames and audio to ffmpeg to produce the video" width="720">
+<img src="https://raw.githubusercontent.com/nsijwali/yamlreel/main/docs/demo.gif" alt="A diagram building itself: a YAML spec and VoiceStudio feed yamlreel, which hands frames and audio to ffmpeg to produce the video" width="720">
 
 **▶ [Watch the 1-minute demo](https://github.com/nsijwali/yamlreel/releases/tag/v0.2.0)**: a video about yamlreel, made by yamlreel from one YAML file, with no video editor.
 
-<img src="docs/preview.jpg" alt="Contact sheet of a rendered video: a typed hook, a cache diagram, bullet lists, highlighted code, a big stat and an end card" width="820">
+<img src="https://raw.githubusercontent.com/nsijwali/yamlreel/main/docs/preview.jpg" alt="Contact sheet of a rendered video: a typed hook, a cache diagram, bullet lists, highlighted code, a big stat and an end card" width="820">
 
-<sub>Every scene of <a href="examples/cache-stampede-45s.yaml">examples/cache-stampede-45s.yaml</a>, rendered from one YAML file.</sub>
+<sub>Every scene of <a href="https://github.com/nsijwali/yamlreel/blob/main/examples/cache-stampede-45s.yaml">examples/cache-stampede-45s.yaml</a>, rendered from one YAML file.</sub>
 
 </div>
 
@@ -45,13 +46,12 @@ Japanese scale), so there is nothing to license or credit.
 You need **Python 3.10 or newer**. pip installs everything else except fonts on macOS and Windows (see the note below).
 
 ```bash
-git clone https://github.com/nsijwali/yamlreel.git
-cd yamlreel
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e '.[ffmpeg]'
+pip install "yamlreel[ffmpeg]"
 ```
 
-> yamlreel is not on PyPI; install it from this repository.
+Prefer an isolated command-line install? `pipx install "yamlreel[ffmpeg]"` works too. (The `vidgen` package on
+PyPI is unrelated to this project, which was called vidgen before 0.2.)
 
 Make your first video:
 
@@ -62,7 +62,11 @@ yamlreel render my-video.yaml                 # full quality, every format in th
 ```
 
 Open `yamlreel-output/<format>/contact.png` first. To try the showcased example without setting up a voice:
-`yamlreel render examples/cache-stampede-45s.yaml --no-voice`.
+
+```bash
+curl -LO https://raw.githubusercontent.com/nsijwali/yamlreel/main/examples/cache-stampede-45s.yaml
+yamlreel render cache-stampede-45s.yaml --no-voice
+```
 
 > **Fonts on macOS and Windows:** yamlreel draws text with the free DejaVu fonts, which most Linux systems
 > include. On macOS run `brew install --cask font-dejavu` once. On Windows, install them from
@@ -79,7 +83,7 @@ Open `yamlreel-output/<format>/contact.png` first. To try the showcased example 
 | Activate the venv | `source .venv/bin/activate` | same | `.venv\Scripts\Activate.ps1` (if scripts are blocked: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`) |
 | ffmpeg | the `[ffmpeg]` extra (or `brew install ffmpeg`) | the extra, or `sudo apt install ffmpeg`. On Fedora use the extra: its own `ffmpeg-free` cannot encode H.264 | the `[ffmpeg]` extra |
 | Fonts | `brew install --cask font-dejavu` | Debian/Ubuntu: `sudo apt install fonts-dejavu-core`; Fedora: `sudo dnf install dejavu-sans-fonts dejavu-serif-fonts dejavu-sans-mono-fonts`; Arch: `sudo pacman -S ttf-dejavu` | DejaVu from [dejavu-fonts.github.io](https://dejavu-fonts.github.io) |
-| Web captures (optional) | `pip install -e '.[capture]'` then `playwright install chromium` | same | same |
+| Web captures (optional) | `pip install "yamlreel[capture]"` then `playwright install chromium` | same | same |
 
 - **ffmpeg:** yamlreel uses the `ffmpeg` on your PATH if there is one, and otherwise the copy that the `[ffmpeg]` extra (the `imageio-ffmpeg` package) brings along. You only need one of them.
 - **Fonts:** yamlreel looks in your `font_dir` setting (or `YAMLREEL_FONT_DIR`) first, then the system font folders, then your own (`~/Library/Fonts` on macOS, `%LOCALAPPDATA%\Microsoft\Windows\Fonts` on Windows). If your fonts live anywhere else, point `font_dir` at that folder. Japanese text uses Noto CJK when it is installed.
@@ -92,7 +96,7 @@ Open `yamlreel-output/<format>/contact.png` first. To try the showcased example 
 
 | Spec | What it is |
 | --- | --- |
-| [`examples/cache-stampede-45s.yaml`](examples/cache-stampede-45s.yaml) | A 45-second system-design explainer with a diagram, code and a narrated script. |
+| [`examples/cache-stampede-45s.yaml`](https://github.com/nsijwali/yamlreel/blob/main/examples/cache-stampede-45s.yaml) | A 45-second system-design explainer with a diagram, code and a narrated script. |
 
 It is narrated; add `--no-voice` to render it with music only. For more starting points, run
 `yamlreel init` with the `system-design`, `project` or `code-tip` template.
@@ -241,24 +245,24 @@ Nested settings merge, so setting only `music.bpm` keeps the rest. `meta.tags`, 
 What you can set: `theme`, your own `themes` (colours, `extends`, `display: serif | sans`, `frame`), `formats`,
 `fps`, `output_dir`, `watermark` (text or a logo), `music`, `voiceover`, `meta` defaults and `limits`. Your name,
 watermark and default tags belong in config, not in code. Every option is explained in
-[`yamlreel/templates/config.example.yaml`](yamlreel/templates/config.example.yaml).
+[`yamlreel/templates/config.example.yaml`](https://github.com/nsijwali/yamlreel/blob/main/yamlreel/templates/config.example.yaml).
 
 A few settings widen what a spec can touch, so yamlreel only reads them from your **user** config or the command
 line, never from a spec or project config you downloaded: `allow_paths`, `allow_private_hosts`,
-`chromium_path`, `font_dir` and `voice_server`. See [SECURITY.md](SECURITY.md).
+`chromium_path`, `font_dir` and `voice_server`. See [SECURITY.md](https://github.com/nsijwali/yamlreel/blob/main/SECURITY.md).
 
 ## Troubleshooting
 
 | You see | Fix |
 | --- | --- |
-| `ffmpeg not found` | `pip install imageio-ffmpeg` (or `pip install -e '.[ffmpeg]'` in your checkout), or install ffmpeg with your package manager. |
+| `ffmpeg not found` | `pip install "yamlreel[ffmpeg]"`, or install ffmpeg with your package manager. |
 | `font 'DejaVuSans-Bold.ttf' not found` | Install DejaVu (see *Install details*), or point `font_dir` in your user config at the folder that holds them. |
 | `scene 0 has narration but no voice server is configured` | Start VoiceStudio and set `voice_server` in your user config, pass `--voice-url`, or render with `--no-voice`. |
 | `cannot reach the voice server … Is VoiceStudio running?` | Start VoiceStudio and check that the URL ends in `/mcp/`. |
 | `Client error '403 Forbidden' for url '…/generate'` | Accept the OmniVoice and tokenizer licences in VoiceStudio's Model Catalogue. |
 | `Server error '500'` from the voice server, or the server is killed | The machine is out of memory. Close other apps, and use a 5 to 10 second voice sample: a longer reference needs over 2 GB on the CPU. |
 | `voice server reply had no audio` | VoiceStudio is set to `OMNIVOICE_MCP_OUTPUT_MODE=files`. yamlreel needs the default inline mode. |
-| `capturing a URL needs playwright` | `pip install -e '.[capture]'`, then `playwright install chromium`. |
+| `capturing a URL needs playwright` | `pip install "yamlreel[capture]"`, then `playwright install chromium`. |
 | `could not capture … Executable doesn't exist` | Run `playwright install chromium`, or set `chromium_path` in your user config. |
 | `… outside the folders this run may read` | Move the file next to your spec, or pass `--allow-path DIR`. For localhost pages, add `--allow-private-hosts`. |
 | A narration line still uses an old voice | Delete `<output folder>/.cache/narration-*.wav`. |
@@ -279,9 +283,24 @@ If you publish a video voiced with OmniVoice, credit it and keep it non-commerci
 requires both, and VoiceStudio's audio tokenizer has its own terms (see *Licences* above). yamlreel puts a
 spec's `meta.credits` into `share-copy.txt` for you.
 
+## Why yamlreel
+
+- **Manim** is excellent for math animation, but each animation is code you write. yamlreel is a spec: you describe scenes, not frames.
+- **Remotion** renders video from React and is very flexible. yamlreel trades that flexibility for zero JavaScript and a fixed set of scene types.
+- **MoviePy** edits and composes video clips you already have. yamlreel generates frames and music itself and adds an optional voiceover.
+- **Online AI video tools** are quick but run in the cloud, usually cost money, and your script and voice leave your machine. yamlreel runs locally and is MIT licensed.
+
+## Contributing
+
+Bug reports, new scene types, examples and docs are welcome. See [CONTRIBUTING.md](https://github.com/nsijwali/yamlreel/blob/main/CONTRIBUTING.md)
+for setup and the pull request flow.
+
 ## Development
 
 ```bash
+git clone https://github.com/nsijwali/yamlreel.git
+cd yamlreel
+python3 -m venv .venv && source .venv/bin/activate
 pip install -e '.[dev,ffmpeg]'
 pytest -q
 ```
@@ -292,6 +311,6 @@ when those tools are missing. CI runs on Ubuntu with Python 3.10 and 3.12.
 ## Security and licence
 
 Specs are treated as untrusted input. File access is confined, URL captures are checked, and settings that widen
-access come only from you. [SECURITY.md](SECURITY.md) covers the details and how to report a vulnerability.
+access come only from you. [SECURITY.md](https://github.com/nsijwali/yamlreel/blob/main/SECURITY.md) covers the details and how to report a vulnerability.
 
-yamlreel is [MIT licensed](LICENSE). Tools you pair it with keep their own licences.
+yamlreel is [MIT licensed](https://github.com/nsijwali/yamlreel/blob/main/LICENSE). Tools you pair it with keep their own licences.
