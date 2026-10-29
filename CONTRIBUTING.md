@@ -43,7 +43,7 @@ it passes locally before you open a pull request.
 
 - `main` is protected. Work on a branch (`fix/short-name`, `feat/short-name`) and open a pull request.
 - Both CI checks must pass before a pull request can merge.
-- Pull requests are squash-merged, so the pull request title becomes the commit message on `main`.
+- Maintainers usually squash-merge, so the pull request title often becomes the commit message on `main`.
 - Keep pull requests focused: one change, with tests, and the README updated if behaviour changed.
 
 ## Commit style

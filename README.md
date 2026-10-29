@@ -4,10 +4,9 @@
 
 **Write a short YAML file. Get a finished video.**
 
-A YouTube Shorts generator and explainer video generator for developers: text-to-video from YAML, with
-system-design explainers, code tips, project launches and feature demos for YouTube, Shorts and LinkedIn,
-diagrams, typed code, original music and an optional AI voiceover in your own voice. Programmatic video in
-Python, with no video editor and nothing uploaded to the cloud.
+yamlreel turns a YAML file into a finished video: system-design explainers, code tips, project launches and
+feature demos for YouTube, Shorts and LinkedIn, with diagrams, typed code, original music and an optional
+voiceover in your own voice.
 
 [![ci](https://github.com/nsijwali/yamlreel/actions/workflows/ci.yml/badge.svg)](https://github.com/nsijwali/yamlreel/actions/workflows/ci.yml)
 ![python](https://img.shields.io/badge/python-3.10%2B-blue)
@@ -47,13 +46,12 @@ Japanese scale), so there is nothing to license or credit.
 You need **Python 3.10 or newer**. pip installs everything else except fonts on macOS and Windows (see the note below).
 
 ```bash
-git clone https://github.com/nsijwali/yamlreel.git
-cd yamlreel
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e '.[ffmpeg]'
+pip install "yamlreel[ffmpeg]"
 ```
 
-> yamlreel is not on PyPI; install it from this repository.
+Prefer an isolated command-line install? `pipx install "yamlreel[ffmpeg]"` works too. (The `vidgen` package on
+PyPI is unrelated to this project, which was called vidgen before 0.2.)
 
 Make your first video:
 
@@ -81,7 +79,7 @@ Open `yamlreel-output/<format>/contact.png` first. To try the showcased example 
 | Activate the venv | `source .venv/bin/activate` | same | `.venv\Scripts\Activate.ps1` (if scripts are blocked: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`) |
 | ffmpeg | the `[ffmpeg]` extra (or `brew install ffmpeg`) | the extra, or `sudo apt install ffmpeg`. On Fedora use the extra: its own `ffmpeg-free` cannot encode H.264 | the `[ffmpeg]` extra |
 | Fonts | `brew install --cask font-dejavu` | Debian/Ubuntu: `sudo apt install fonts-dejavu-core`; Fedora: `sudo dnf install dejavu-sans-fonts dejavu-serif-fonts dejavu-sans-mono-fonts`; Arch: `sudo pacman -S ttf-dejavu` | DejaVu from [dejavu-fonts.github.io](https://dejavu-fonts.github.io) |
-| Web captures (optional) | `pip install -e '.[capture]'` then `playwright install chromium` | same | same |
+| Web captures (optional) | `pip install "yamlreel[capture]"` then `playwright install chromium` | same | same |
 
 - **ffmpeg:** yamlreel uses the `ffmpeg` on your PATH if there is one, and otherwise the copy that the `[ffmpeg]` extra (the `imageio-ffmpeg` package) brings along. You only need one of them.
 - **Fonts:** yamlreel looks in your `font_dir` setting (or `YAMLREEL_FONT_DIR`) first, then the system font folders, then your own (`~/Library/Fonts` on macOS, `%LOCALAPPDATA%\Microsoft\Windows\Fonts` on Windows). If your fonts live anywhere else, point `font_dir` at that folder. Japanese text uses Noto CJK when it is installed.
@@ -253,14 +251,14 @@ line, never from a spec or project config you downloaded: `allow_paths`, `allow_
 
 | You see | Fix |
 | --- | --- |
-| `ffmpeg not found` | `pip install imageio-ffmpeg` (or `pip install -e '.[ffmpeg]'` in your checkout), or install ffmpeg with your package manager. |
+| `ffmpeg not found` | `pip install "yamlreel[ffmpeg]"`, or install ffmpeg with your package manager. |
 | `font 'DejaVuSans-Bold.ttf' not found` | Install DejaVu (see *Install details*), or point `font_dir` in your user config at the folder that holds them. |
 | `scene 0 has narration but no voice server is configured` | Start VoiceStudio and set `voice_server` in your user config, pass `--voice-url`, or render with `--no-voice`. |
 | `cannot reach the voice server … Is VoiceStudio running?` | Start VoiceStudio and check that the URL ends in `/mcp/`. |
 | `Client error '403 Forbidden' for url '…/generate'` | Accept the OmniVoice and tokenizer licences in VoiceStudio's Model Catalogue. |
 | `Server error '500'` from the voice server, or the server is killed | The machine is out of memory. Close other apps, and use a 5 to 10 second voice sample: a longer reference needs over 2 GB on the CPU. |
 | `voice server reply had no audio` | VoiceStudio is set to `OMNIVOICE_MCP_OUTPUT_MODE=files`. yamlreel needs the default inline mode. |
-| `capturing a URL needs playwright` | `pip install -e '.[capture]'`, then `playwright install chromium`. |
+| `capturing a URL needs playwright` | `pip install "yamlreel[capture]"`, then `playwright install chromium`. |
 | `could not capture … Executable doesn't exist` | Run `playwright install chromium`, or set `chromium_path` in your user config. |
 | `… outside the folders this run may read` | Move the file next to your spec, or pass `--allow-path DIR`. For localhost pages, add `--allow-private-hosts`. |
 | A narration line still uses an old voice | Delete `<output folder>/.cache/narration-*.wav`. |
@@ -285,7 +283,7 @@ spec's `meta.credits` into `share-copy.txt` for you.
 
 - **Manim** is excellent for math animation, but each animation is code you write. yamlreel is a spec: you describe scenes, not frames.
 - **Remotion** renders video from React and is very flexible. yamlreel trades that flexibility for zero JavaScript and a fixed set of scene types.
-- **MoviePy** edits and composes video clips you already have. yamlreel generates the frames, music and voiceover from nothing.
+- **MoviePy** edits and composes video clips you already have. yamlreel generates frames and music itself and adds an optional voiceover.
 - **Online AI video tools** are quick but run in the cloud, usually cost money, and your script and voice leave your machine. yamlreel runs locally and is MIT licensed.
 
 ## Contributing
@@ -296,6 +294,9 @@ for setup and the pull request flow.
 ## Development
 
 ```bash
+git clone https://github.com/nsijwali/yamlreel.git
+cd yamlreel
+python3 -m venv .venv && source .venv/bin/activate
 pip install -e '.[dev,ffmpeg]'
 pytest -q
 ```

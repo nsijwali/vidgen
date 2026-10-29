@@ -1,9 +1,14 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "yamlreel"
-version = "0.2.0"
+dynamic = ["version"]
 description = "Spec-driven generator for short project, system-design and demo videos (YouTube, Shorts, LinkedIn)."
 readme = "README.md"
-license = {text = "MIT"}
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{name = "Nitin Sijwali"}]
 keywords = [
   "text-to-video", "video-generation", "youtube-shorts", "explainer-video", "system-design",
@@ -14,7 +19,6 @@ classifiers = [
   "Environment :: Console",
   "Intended Audience :: Developers",
   "Intended Audience :: Education",
-  "License :: OSI Approved :: MIT License",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.10",
@@ -41,8 +45,8 @@ dev = ["pytest>=7"]
 yamlreel = "yamlreel.cli:main"
 vidgen = "yamlreel.legacy:main"
 
-[tool.setuptools]
-license-files = ["LICENSE"]
+[tool.setuptools.dynamic]
+version = {attr = "yamlreel.__version__"}
 
 [tool.setuptools.packages.find]
 include = ["yamlreel*"]
