@@ -44,15 +44,24 @@ def legacy_user_config(base: Path) -> Path:
     return base / LEGACY / "config.yaml"
 
 
+def user_config_conflict(base: Path, dest: Path) -> str | None:
+    """Message if writing `dest` (the default new user config) would shadow an existing legacy user config."""
+    old = legacy_user_config(base)
+    if dest == base / "yamlreel" / "config.yaml" and old.exists() and not dest.exists():
+        return (f"{old} already exists; move it instead of creating a second config: "
+                f"mv {old.parent} {dest.parent} (or pass --force to write a new one anyway)")
+    return None
+
+
 def pick(new: Path, old: Path) -> Path:
     """One file per config slot, never merged: `new` if it exists, else `old` if it exists (warn), else `new`."""
     if new.exists():
         if old.exists() and not _same_file(new, old):
-            warn_once(f"path:{old}", f"ignoring legacy config {old} because {new} exists; "
+            warn_once(f"ignored:{old}", f"ignoring legacy config {old} because {new} exists; "
                                      f"remove or move it (support for the old location ends in yamlreel {REMOVE_IN})")
         return new
     if old.exists():
-        warn_once(f"path:{old}", _deprecated(str(old), str(new)))
+        warn_once(f"deprecated:{old}", _deprecated(str(old), str(new)))
         return old
     return new
 

@@ -9,7 +9,8 @@ from pathlib import Path
 
 import yaml
 
-from .config import CONFIG_FILENAME, Config, ConfigError, load_config, user_config_path
+from . import legacy
+from .config import CONFIG_FILENAME, config_base, Config, ConfigError, load_config, user_config_path
 from .voice import VoiceError, VoiceServer
 from .render import RenderError, Runtime, render, share_copy
 from .safety import UnsafeInput
@@ -116,6 +117,11 @@ def cmd_init(args: argparse.Namespace) -> int:
 def cmd_config(args: argparse.Namespace) -> int:
     if args.action == "init":
         dest = user_config_path() if args.user else Path(CONFIG_FILENAME)
+        if args.user and not args.force:
+            conflict = legacy.user_config_conflict(Path(config_base()), dest)
+            if conflict:
+                print(conflict, file=sys.stderr)
+                return 2
         return _copy_template("config.example", dest, args.force)
     cfg = _config(args)
     shown = dict(cfg.data)

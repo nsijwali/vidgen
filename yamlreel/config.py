@@ -61,8 +61,9 @@ class Config:
     sources: list[Path] = field(default_factory=list)
 
 
-def _config_base() -> str:
-    return os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+def config_base() -> str:
+    xdg = os.environ.get("XDG_CONFIG_HOME")  # per the XDG spec, a relative path is ignored
+    return xdg if xdg and os.path.isabs(xdg) else str(Path.home() / ".config")
 
 
 def user_config_path() -> Path:
@@ -70,7 +71,7 @@ def user_config_path() -> Path:
     explicit = legacy.env("CONFIG")
     if explicit:
         return Path(explicit).expanduser()
-    return Path(_config_base()) / "yamlreel" / "config.yaml"
+    return Path(config_base()) / "yamlreel" / "config.yaml"
 
 
 def find_user_config() -> Path:
@@ -78,7 +79,7 @@ def find_user_config() -> Path:
     explicit = legacy.env("CONFIG")
     if explicit:
         return Path(explicit).expanduser()
-    base = Path(_config_base())
+    base = Path(config_base())
     return legacy.pick(base / "yamlreel" / "config.yaml", legacy.legacy_user_config(base))
 
 

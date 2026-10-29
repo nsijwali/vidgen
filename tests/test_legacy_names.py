@@ -5,6 +5,7 @@ import pytest
 import yaml
 
 from yamlreel import legacy
+from yamlreel.cli import main
 from yamlreel.config import ConfigError, load_config
 
 
@@ -138,3 +139,61 @@ def test_console_scripts_are_registered():
     eps = {e.name: e.value for e in importlib.metadata.entry_points(group="console_scripts")
            if e.name in ("yamlreel", "vidgen")}
     assert eps == {"yamlreel": "yamlreel.cli:main", "vidgen": "yamlreel.legacy:main"}
+
+
+@pytest.mark.parametrize("var", ["YAMLREEL_CONFIG", "VIDGEN_CONFIG"])
+def test_explicit_config_env_has_no_path_fallback(env, monkeypatch, var):
+    write(env / "xdg" / "vidgen" / "config.yaml", {"allow_paths": ["/data"]})
+    monkeypatch.setenv(var, str(env / "missing.yaml"))
+    cfg = load_config()
+    assert cfg.sources == [] and cfg.allow_paths == []
+
+
+def test_empty_new_env_var_means_unset(monkeypatch, capsys):
+    monkeypatch.setenv("YAMLREEL_FONT_DIR", "")
+    monkeypatch.setenv("VIDGEN_FONT_DIR", "/old")
+    assert load_config().font_dirs == ["/old"]
+    assert len(lines(capsys)) == 1
+
+
+def test_legacy_project_config_error_and_all_trusted_keys(env):
+    old = env / "vidgen.config.yaml"
+    for key, val in (("allow_paths", ["/"]), ("allow_private_hosts", True), ("chromium_path", "/bin/sh"),
+                     ("font_dir", "/"), ("voice_server", {"url": "http://127.0.0.1:1/mcp/"})):
+        write(old, {key: val})
+        with pytest.raises(ConfigError, match="only read from the user config"):
+            load_config()
+
+
+def test_ignoring_warning_names_the_legacy_path(env, capsys):
+    write(env / "xdg" / "yamlreel" / "config.yaml", {"theme": "washi"})
+    old = write(env / "xdg" / "vidgen" / "config.yaml", {"theme": "sumi"})
+    load_config()
+    assert f"ignoring legacy config {old}" in capsys.readouterr().err
+
+
+def test_legacy_script_exit_codes(env):
+    assert legacy.main(["validate", "missing.yaml"]) == 1
+    with pytest.raises(SystemExit) as e:
+        legacy.main(["nope"])
+    assert e.value.code == 2
+
+
+def test_relative_xdg_config_home_is_ignored(env, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", "rel")
+    monkeypatch.setenv("HOME", str(env / "fakehome"))
+    for d in ("yamlreel", "vidgen"):
+        write(env / "rel" / d / "config.yaml", {"allow_paths": ["/data"]})
+        write(env / d / "config.yaml", {"allow_paths": ["/data"]})
+    cfg = load_config()
+    assert cfg.sources == [] and cfg.allow_paths == []
+
+
+def test_config_init_user_refuses_to_shadow_a_legacy_config(env, capsys):
+    old = write(env / "xdg" / "vidgen" / "config.yaml", {"theme": "washi"})
+    assert main(["config", "init", "--user"]) == 2
+    err = capsys.readouterr().err
+    assert str(old) in err and "mv " in err
+    assert not (env / "xdg" / "yamlreel" / "config.yaml").exists()
+    assert main(["config", "init", "--user", "--force"]) == 0
+    assert (env / "xdg" / "yamlreel" / "config.yaml").exists()
