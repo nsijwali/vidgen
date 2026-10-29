@@ -15,7 +15,7 @@ from .render import RenderError, Runtime, render, share_copy
 from .safety import UnsafeInput
 from .shots import CaptureError
 from .specs import FORMATS, SpecError, load_spec
-from .theme import set_font_dirs
+from .theme import FontError, set_font_dirs
 
 
 def _templates() -> list[str]:
@@ -171,7 +171,7 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
     try:
         return args.fn(args)
-    except (SpecError, ConfigError, RenderError, CaptureError, UnsafeInput, ValueError) as e:
+    except (SpecError, ConfigError, RenderError, CaptureError, UnsafeInput, FontError, ValueError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
 

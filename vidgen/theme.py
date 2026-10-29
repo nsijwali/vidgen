@@ -1,6 +1,7 @@
 """Colour themes and font loading."""
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -53,6 +54,20 @@ _FONT_DIRS = [
     "/System/Library/Fonts/Supplemental",
     "C:/Windows/Fonts",
 ]
+# Per-user font folders, where fonts installed without admin rights land (Font Book and Homebrew casks on
+# macOS, a per-user install on Windows). Searched after the system folders. Resolved at lookup time;
+# _load results stay cached until set_font_dirs().
+def _user_font_dirs() -> list[str]:
+    """Per-user font folders, skipping any that cannot be resolved (a container user with no HOME and no
+    passwd entry must still find fonts in the other folders, never in a cwd-relative '~' folder)."""
+    out = []
+    home = os.path.expanduser("~")
+    if home != "~":
+        out.append(os.path.join(home, "Library", "Fonts"))
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        out.append(os.path.join(local, "Microsoft", "Windows", "Fonts"))
+    return out
 
 
 class FontError(RuntimeError):
@@ -113,7 +128,7 @@ def get_theme(name: str, custom: dict | None = None) -> Theme:
 
 
 def _find(filename: str) -> str | None:
-    dirs = [d for d in [*_EXTRA_FONT_DIRS, *_FONT_DIRS] if d]
+    dirs = [d for d in [*_EXTRA_FONT_DIRS, *_FONT_DIRS, *_user_font_dirs()] if d]
     for d in dirs:
         p = Path(d) / filename
         if p.exists():
@@ -126,7 +141,7 @@ def _load(kind: str, size: int) -> ImageFont.FreeTypeFont:
     path = _find(_FONT_FILES[kind])
     if path is None:
         raise FontError(
-            f"font {_FONT_FILES[kind]!r} not found; install DejaVu fonts or set VIDGEN_FONT_DIR"
+            f"font {_FONT_FILES[kind]!r} not found; install DejaVu fonts, or set font_dir in your user config or VIDGEN_FONT_DIR"
         )
     return ImageFont.truetype(path, size)
 

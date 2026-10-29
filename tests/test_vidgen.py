@@ -1,3 +1,4 @@
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -15,6 +16,12 @@ from vidgen.theme import get_theme
 from vidgen.textkit import make_block
 
 TEMPLATES = Path(__file__).parent.parent / "vidgen" / "templates"
+
+
+def skip_without_ffprobe():
+    """Some ffmpeg builds (static pip wheels) ship without ffprobe; only the stream checks need it, not vidgen."""
+    if shutil.which("ffprobe") is None:
+        pytest.skip("ffprobe not on PATH")
 
 
 def spec_of(*scenes, **extra):
@@ -139,6 +146,7 @@ def test_end_to_end_render_produces_playable_files(tmp_path):
     r = render(spec, "landscape", tmp_path, fps=8, scale=0.25, music_override="koto", contact=True)
     for key in ("video", "poster", "contact"):
         assert r[key].exists() and r[key].stat().st_size > 1000
+    skip_without_ffprobe()
     probe = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,width,height",
                             "-show_entries", "format=duration", "-of", "json", str(r["video"])],
                            capture_output=True, text=True, check=True)
@@ -557,6 +565,7 @@ def test_narration_is_synthesised_mixed_and_stretches_the_scene(tmp_path, sse):
     finally:
         srv.shutdown()
     assert calls == [{"text": "Hello there", "profile_id": "warm", "language": "en"}]
+    skip_without_ffprobe()
     info = _probe(tmp_path / "o" / "square" / "video.mp4")
     assert "audio" in info["streams"]
     assert info["duration"] >= 3.0 + 0.5 + 1.0 - 0.3  # scene 1 stretched to speech + gap, plus scene 2
@@ -628,3 +637,65 @@ def test_read_screen_speaks_the_text_shown_in_the_video(tmp_path):
     finally:
         srv.shutdown()
     assert [c["text"] for c in calls] == ["What is a stampede?", "Custom line"]
+
+
+def test_fonts_installed_per_user_are_found(tmp_path, monkeypatch):
+    from vidgen import theme
+    fonts = tmp_path / "Library" / "Fonts"
+    fonts.mkdir(parents=True)
+    (fonts / "DejaVuSans.ttf").write_bytes(b"")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setattr(theme, "_FONT_DIRS", [])
+    monkeypatch.setattr(theme, "_EXTRA_FONT_DIRS", [])
+    assert theme._find("DejaVuSans.ttf") == str(fonts / "DejaVuSans.ttf")
+    # font_dir from the user config still wins over a per-user copy
+    mine = tmp_path / "mine"
+    mine.mkdir()
+    (mine / "DejaVuSans.ttf").write_bytes(b"")
+    monkeypatch.setattr(theme, "_EXTRA_FONT_DIRS", [str(mine)])
+    assert theme._find("DejaVuSans.ttf") == str(mine / "DejaVuSans.ttf")
+    # and a system copy wins over a per-user one
+    system = tmp_path / "system"
+    system.mkdir()
+    (system / "DejaVuSans.ttf").write_bytes(b"")
+    monkeypatch.setattr(theme, "_EXTRA_FONT_DIRS", [])
+    monkeypatch.setattr(theme, "_FONT_DIRS", [str(system)])
+    assert theme._find("DejaVuSans.ttf") == str(system / "DejaVuSans.ttf")
+
+
+def test_fonts_are_found_when_the_home_folder_cannot_be_resolved(tmp_path, monkeypatch):
+    # e.g. `docker run --user 12345`: no HOME and no passwd entry
+    pwd = pytest.importorskip("pwd")
+    from vidgen import theme
+    monkeypatch.delenv("HOME", raising=False)
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+
+    def no_entry(uid):
+        raise KeyError(uid)
+    monkeypatch.setattr(pwd, "getpwuid", no_entry)
+    (tmp_path / "DejaVuSans.ttf").write_bytes(b"")
+    monkeypatch.setattr(theme, "_EXTRA_FONT_DIRS", [str(tmp_path)])
+    assert theme._find("DejaVuSans.ttf") == str(tmp_path / "DejaVuSans.ttf")
+    monkeypatch.setattr(theme, "_EXTRA_FONT_DIRS", [])
+    monkeypatch.setattr(theme, "_FONT_DIRS", [])
+    assert theme._user_font_dirs() == []
+    # an unresolved '~' must never become a folder relative to where vidgen runs
+    planted = tmp_path / "cwd" / "~" / "Library" / "Fonts"
+    planted.mkdir(parents=True)
+    (planted / "DejaVuSans.ttf").write_bytes(b"")
+    monkeypatch.chdir(tmp_path / "cwd")
+    assert theme._find("DejaVuSans.ttf") is None
+
+
+def test_cli_reports_a_missing_font_without_a_traceback(home, monkeypatch, capsys):
+    from vidgen import theme
+    monkeypatch.setattr(theme, "_find", lambda filename: None)
+    theme._load.cache_clear()
+    spec = write(home / "work" / "v.yaml", {"scenes": [{"type": "title", "title": "Hi", "seconds": 1}],
+                                            "formats": ["square"], "music": {"style": "none"}})
+    try:
+        assert main(["render", str(spec), "--preview"]) == 1
+    finally:
+        theme._load.cache_clear()
+    assert capsys.readouterr().err.startswith("error: font 'DejaVu")

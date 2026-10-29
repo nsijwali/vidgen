@@ -99,7 +99,7 @@ VoiceStudio is AGPL-3.0 and its models have their own licences; check them befor
 - **Text never silently overflows**: it wraps, then shrinks, and `render` prints a warning when it had to.
 - **Screenshots** are cached in `<out>/.cache`; delete it to recapture.
 - **Captions sit clear of the Shorts UI** in vertical frames (content is centred above the lower third).
-- Fonts: DejaVu (and Noto CJK for Japanese text) from the system; set `font_dir` in your user config (or `VIDGEN_FONT_DIR`) to use others. `chromium_path` (or `VIDGEN_CHROMIUM`) picks the browser for captures.
+- Fonts: DejaVu (and Noto CJK for Japanese text), looked up in `font_dir` from your user config (or `VIDGEN_FONT_DIR`) first, then the system font folders, then your own (`~/Library/Fonts` on macOS, where `brew install --cask font-dejavu` puts them; `%LOCALAPPDATA%\Microsoft\Windows\Fonts` on Windows). `chromium_path` (or `VIDGEN_CHROMIUM`) picks the browser for captures.
 - Review before publishing: a 15-second video carries one idea, so check anything you simplified.
 
 ## Tests
