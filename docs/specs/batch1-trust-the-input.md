@@ -79,7 +79,7 @@ evaluated in this order:
   evidence is the proxy's own refusal record, not a response header or body (an HTTPS CONNECT refusal never reaches the
   page, and a site can forge a header): `PinningProxy` keeps the first 16 `(host, reason)` entries plus a count, and the
   capture's route guard adds direct sub-resources it aborts before they reach the proxy. A host that does not resolve
-  (`Unresolvable`) is still refused with 403 but is not a policy decision and is not recorded. The check runs after
+  (`Unresolvable`) is still refused with 403 but is not a policy decision and is not recorded; the same goes for a name whose every answer is `0.0.0.0` or `::` (what Pi-hole or NextDNS return for blocked trackers, "blocked by DNS"), though an unspecified address written as a literal, or mixed with other answers, stays a policy refusal. The check runs after
   navigation errors, before the fallback navigation, after the settle wait, after the screenshot and after the browser
   closes (the image is deleted on failure). `X-Yamlreel-Refused` stays on the proxy's 403s for humans and is stripped from
   relayed upstream responses; nothing trusts it. Chromium launches with `--force-webrtc-ip-handling-policy=` and

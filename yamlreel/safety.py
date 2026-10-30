@@ -194,6 +194,14 @@ def _is_nonstandard_numeric(name: str) -> bool:
     return False
 
 
+def _is_ip_literal(name: str) -> bool:
+    try:
+        ipaddress.ip_address(name.strip("[]"))
+    except ValueError:
+        return False
+    return True
+
+
 def pinned_ips(host: str, allow_private: bool) -> list[str]:
     """Resolve `host` once, validate every address, and return the addresses that may be connected to.
 
@@ -208,6 +216,10 @@ def pinned_ips(host: str, allow_private: bool) -> list[str]:
     ips = _ips_for(name)
     if not ips:
         raise Unresolvable(f"cannot resolve host: {host}")
+    if not _is_ip_literal(name) and all(ip.is_unspecified for ip in ips):
+        # DNS ad/tracker blockers (Pi-hole, NextDNS) answer 0.0.0.0 or ::. Still refused and never connected to,
+        # but a blocked name is not a policy decision about the page.
+        raise Unresolvable(f"host is blocked by DNS (resolves to {_fmt(ips[0])}): {host}")
     out: list[str] = []
     for ip in ips:
         verdict = classify(ip)

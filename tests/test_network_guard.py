@@ -23,6 +23,11 @@ FAKE_DNS: dict[str, list[str]] = {
     "mapped.test": ["::ffff:100.64.0.1"],
     "dupes.test": ["93.184.216.34", "93.184.216.34"],
     "empty.test": [],
+    "blocked.test": ["0.0.0.0"],
+    "blocked6.test": ["::"],
+    "blockedmap.test": ["::ffff:0.0.0.0"],
+    "blockedmany.test": ["0.0.0.0", "::"],
+    "halfblocked.test": ["0.0.0.0", "93.184.216.34"],
 }
 
 
@@ -831,3 +836,35 @@ def test_the_refused_header_is_stripped_from_interim_responses_too(connect_spy):
         srv.close()
     assert b" 103 " in resp and b"Link: </a.css>" in resp and resp.endswith(b"ok")
     assert b"x-yamlreel-refused" not in resp.lower()
+
+
+@pytest.mark.parametrize("host", ["blocked.test", "blocked6.test", "blockedmap.test", "blockedmany.test"])
+def test_a_name_a_dns_blocker_answers_with_unspecified_is_unresolvable_not_a_policy_refusal(host):
+    """Pi-hole/NextDNS answer 0.0.0.0 or :: for blocked trackers: refused, but not a policy decision."""
+    from yamlreel.safety import Unresolvable
+    for allow_private in (False, True):
+        with pytest.raises(Unresolvable, match="blocked by DNS"):
+            pinned_ips(host, allow_private)
+
+
+def test_a_mixed_answer_with_an_unspecified_address_keeps_the_policy_refusal():
+    from yamlreel.safety import Unresolvable
+    with pytest.raises(UnsafeInput) as e:
+        pinned_ips("halfblocked.test", True)
+    assert not isinstance(e.value, Unresolvable)
+
+
+def test_an_unspecified_address_literal_stays_a_policy_refusal():
+    from yamlreel.safety import Unresolvable
+    with pytest.raises(UnsafeInput) as e:
+        pinned_ips("0.0.0.0", True)
+    assert not isinstance(e.value, Unresolvable)
+
+
+def test_the_proxy_refuses_a_dns_blocked_host_with_403_and_does_not_record_it(connect_spy):
+    from yamlreel.pinproxy import PinningProxy
+    with PinningProxy(allow_private=True) as px:
+        resp = _get(px.url, "http://blocked.test/")
+        assert px.refusal_count == 0
+    assert b" 403 " in resp.split(b"\r\n")[0] + b" "
+    assert all(a == "127.0.0.1" for a, _ in connect_spy)  # only the test client reached the proxy

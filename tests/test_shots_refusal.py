@@ -208,7 +208,7 @@ def test_hostile_page_text_in_a_browser_error_is_not_a_policy_refusal(run_captur
     with pytest.raises(CaptureError) as e:
         run_capture(goto=goto)
     msg = str(e.value)
-    assert msg.startswith("cannot capture") is False and "could not capture" in msg
+    assert not msg.startswith("cannot capture") and "could not capture" in msg
     assert "\x1b" not in msg
     assert "a request to" not in msg  # the policy-refusal wording is only for the proxy's own record
 
@@ -231,7 +231,8 @@ def sub_request(url):
 @pytest.fixture
 def dns(monkeypatch):
     from yamlreel import safety
-    monkeypatch.setattr(safety, "_resolve", lambda host: [])  # nothing resolves: every name is dead
+    answers = {"adserver.test": ["0.0.0.0"], "adserver6.test": ["::"]}
+    monkeypatch.setattr(safety, "_resolve", lambda host: answers.get(host, []))  # all other names are dead
 
 
 def test_a_direct_subresource_to_a_forbidden_host_is_aborted_and_fails_the_capture(run_capture):
@@ -312,3 +313,32 @@ def test_launch_disables_non_proxied_webrtc_for_headless_and_full_chrome_and_kee
     assert "--force-webrtc-ip-handling-policy=disable_non_proxied_udp" in args
     assert "--webrtc-ip-handling-policy=disable_non_proxied_udp" in args
     assert pw.launch_kwargs["proxy"] == {"server": FakeProxy.url, "bypass": "<-loopback>"}
+
+
+@pytest.mark.parametrize("host", ["adserver.test", "adserver6.test"])
+def test_a_dns_blocked_subresource_is_aborted_but_does_not_fail_the_capture(run_capture, dns, host):
+    pw = run_capture(goto=lambda n: sub_request(f"http://{host}/tracker.js"))
+    assert pw.aborted == [f"http://{host}/tracker.js"] and pw.screenshots == 1
+
+
+def test_a_dns_blocked_main_url_is_an_error(dns, tmp_path):
+    with pytest.raises(CaptureError, match="blocked by DNS"):
+        shots.load_shot("http://adserver.test/", {}, tmp_path, tmp_path, [], allow_private=False)
+
+
+def test_the_image_is_deleted_when_the_browser_fails_to_close(run_capture):
+    def close():
+        raise RuntimeError("browser crashed")
+
+    with pytest.raises(RuntimeError):
+        run_capture(close=close)
+    assert run_capture.pw.screenshots == 1 and not run_capture.pw.dest.exists()
+
+
+def test_the_image_is_deleted_when_the_run_is_interrupted(run_capture):
+    def shot():
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        run_capture(shot=shot)
+    assert not run_capture.pw.dest.exists()
