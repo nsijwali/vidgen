@@ -163,6 +163,7 @@ scenes: [...]
 
 - **Diagrams:** `nodes` take `id, label, kind (client|service|cache|db), x, y, at`, where `x` and `y` are fractions of the frame. `vx, vy` override them in vertical frames, so one diagram fits both shapes. `edges` take `from, to, label, bad, dashed, at, color` and `flash` takes `node, at, text, color`.
 - **Shots:** `source` (URL or image), `fit: cover | card`, `zoom: [from, to]`, `focus: [x, y]`, `focus_to`, `click: [selectors]`, `scroll_y`, `wait_ms`, `viewport`, `scale`. Screenshots are cached in `<output folder>/.cache`; delete it to capture again.
+- **Unknown keys are errors:** a misspelled or extra key stops the render, for example `error: scenes[0].titel: unknown field for a title scene; allowed: caption, eyebrow, narration, ...`, instead of being silently ignored. Limits are capped at 3600 seconds and 1000 scenes whatever a spec or config says.
 - **Files:** images, pages, music and logos must sit in the spec's folder, a config folder, or a folder you allow with `--allow-path DIR` (or `allow_paths` in your user config).
 - **Music:** `seed` changes the melody and `snap: true` rounds scene lengths to beats. To use your own track, point `style` at an audio file and credit it in `meta.credits`.
 - **Watermark:** appears on every frame and the poster. The default corner is bottom-right for landscape and top-left for vertical, because the Shorts buttons cover the right edge and the bottom.
@@ -177,8 +178,9 @@ scenes: [...]
 ## Voiceover in your own voice
 
 Give a scene a `narration:` line and yamlreel speaks it, lowers the music under the voice, and makes the scene as
-long as the speech needs. Speech comes from a text-to-speech server running **on your own machine**, for example
-[VoiceStudio](https://github.com/debpalash/VoiceStudio), which can also clone your voice from a short recording.
+long as the speech needs. Speech comes from a text-to-speech server **you choose**: one on your own machine, for example
+[VoiceStudio](https://github.com/debpalash/VoiceStudio) (which can also clone your voice from a short recording), or a remote one.
+Your narration text goes to that server, so it stays on your machine only if the server is local.
 
 ```yaml
 scenes:
@@ -224,9 +226,9 @@ folder) instead of `narration:`.
 <br>
 
 - **Any compatible server works.** yamlreel speaks MCP "Streamable HTTP" and calls the server's `generate_speech` tool, which must return the audio inline (VoiceStudio's default). VoiceStudio is just one server that does this.
-- **Privacy:** narration text is sent only to the server you configured. A spec cannot choose the server: the address comes only from your user config or the command line.
+- **Privacy:** narration text goes to the server you configured. A local server (such as VoiceStudio on `127.0.0.1`) keeps it on your machine; a remote URL sends it to that host. A spec cannot choose the server: the address comes only from your user config or the command line.
 - **Precedence:** a scene's own `narration:` wins over `read_screen`, and `narration: false` keeps a scene silent.
-- **Caching:** audio is cached per text and voice in `<output folder>/.cache`, so re-renders do not speak lines again. If you change the recording behind a voice, delete `<output folder>/.cache/narration-*.wav`.
+- **Caching:** audio is cached in `<output folder>/.cache/narration-v2-*.wav`, keyed by the server address (scheme, host, port and path, never credentials), the voice, the language and the text, so re-renders do not speak lines again. The cache is never pruned. Clear it with `rm <output folder>/.cache/narration-*.wav`. Upgrading to 0.2.2 re-voices every line once. Changing the engine, model or account behind the **same** server URL, or the recording behind a voice, is not detected: run that `rm` afterwards.
 - **Licences:** VoiceStudio is AGPL-3.0, and its models have their own licences, which its Model Catalogue shows per model. OmniVoice's weights are non-commercial (CC-BY-NC), and that may carry over to the speech they generate. Check before you monetise a video.
 
 </details>
@@ -268,7 +270,7 @@ line, never from a spec or project config you downloaded: `allow_paths`, `allow_
 | `capturing a URL needs playwright` | `pip install "yamlreel[capture]"`, then `playwright install chromium`. |
 | `could not capture … Executable doesn't exist` | Run `playwright install chromium`, or set `chromium_path` in your user config. |
 | `… outside the folders this run may read` | Move the file next to your spec, or pass `--allow-path DIR`. For localhost pages, add `--allow-private-hosts`. |
-| A narration line still uses an old voice | Delete `<output folder>/.cache/narration-*.wav`. |
+| A narration line still uses an old voice | The cache cannot see a change behind the same server URL (new engine, model, account or voice recording). Run `rm <output folder>/.cache/narration-*.wav`. |
 | Homebrew fails to build ffmpeg or Python | Older macOS versions get no prebuilt packages. Use the `[ffmpeg]` extra for ffmpeg, and [python.org](https://www.python.org/downloads/) or `uv` for Python. |
 
 ## Built with
@@ -291,7 +293,7 @@ spec's `meta.credits` into `share-copy.txt` for you.
 - **Manim** is excellent for math animation, but each animation is code you write. yamlreel is a spec: you describe scenes, not frames.
 - **Remotion** renders video from React and is very flexible. yamlreel trades that flexibility for zero JavaScript and a fixed set of scene types.
 - **MoviePy** edits and composes video clips you already have. yamlreel generates frames and music itself and adds an optional voiceover.
-- **Online AI video tools** are quick but run in the cloud, usually cost money, and your script and voice leave your machine. yamlreel runs locally and is MIT licensed.
+- **Online AI video tools** are quick but run in the cloud, usually cost money, and your script and voice leave your machine. yamlreel renders locally and is MIT licensed; your narration stays local only if your voice server is.
 
 ## Contributing
 

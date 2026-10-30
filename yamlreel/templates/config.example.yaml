@@ -44,7 +44,7 @@ voiceover:
 #     display: sans          # serif | sans
 #     frame: false
 
-limits:
+limits:                      # capped at 3600 s / 1000 scenes, whatever you set here
   max_seconds: 600           # total video length
   max_scenes: 200
 
