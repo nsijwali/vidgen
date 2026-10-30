@@ -5,7 +5,7 @@ import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from PIL import Image, ImageDraw, ImageFilter
 
@@ -14,6 +14,9 @@ from .textkit import TextBlock, blit, ease_in_out, ease_out, lerp_color, make_bl
 from .theme import Color, Theme, font
 
 SS = 2  # diagram supersampling
+
+# Options of a `shot` scene that are passed to the screenshot capture (and so are part of its cache key).
+CAPTURE_OPTS = ("viewport", "scale", "click", "scroll_y", "wait_ms", "full_page")
 
 
 @dataclass
@@ -96,6 +99,11 @@ def _appear(t: float, start: float, dur: float = 0.5) -> float:
 
 
 class Scene:
+    # The spec keys a scene reads. specs.py rejects anything else, and a test keeps these tables in step
+    # with what the constructors actually read.
+    COMMON_FIELDS: ClassVar[frozenset[str]] = frozenset({"type", "seconds", "caption", "narration", "narration_audio"})
+    FIELDS: ClassVar[frozenset[str]] = frozenset()
+
     def __init__(self, spec: dict[str, Any], ctx: Ctx):
         self.spec = spec
         self.ctx = ctx
@@ -108,6 +116,8 @@ class Scene:
 
 class TitleScene(Scene):
     """Eyebrow, title, subtitle, optional URL line; elements ease in one by one."""
+
+    FIELDS: ClassVar[frozenset[str]] = frozenset({"title", "eyebrow", "subtitle", "url", "rule"})
 
     def __init__(self, spec: dict[str, Any], ctx: Ctx):
         super().__init__(spec, ctx)
@@ -145,6 +155,8 @@ class TitleScene(Scene):
 
 class TypeScene(Scene):
     """A line typed out with a blinking cursor, used as the opening hook."""
+
+    FIELDS: ClassVar[frozenset[str]] = frozenset({"text"})
 
     def __init__(self, spec: dict[str, Any], ctx: Ctx):
         super().__init__(spec, ctx)
@@ -187,9 +199,11 @@ class TypeScene(Scene):
 class ShotScene(Scene):
     """A screenshot with a slow camera move (zoom/pan to a focus point)."""
 
+    FIELDS: ClassVar[frozenset[str]] = frozenset({"source", "title", "fit", "zoom", "focus", "focus_to", *CAPTURE_OPTS})
+
     def __init__(self, spec: dict[str, Any], ctx: Ctx):
         super().__init__(spec, ctx)
-        opts = {k: spec[k] for k in ("viewport", "scale", "click", "scroll_y", "wait_ms", "full_page") if k in spec}
+        opts = {k: spec[k] for k in CAPTURE_OPTS if k in spec}
         self.img = load_shot(spec["source"], opts, ctx.workdir, ctx.base_dir, ctx.roots,
                              ctx.allow_private_hosts, ctx.chromium)
         self.fit = spec.get("fit", "card" if ctx.W <= ctx.H else "cover")
@@ -244,6 +258,8 @@ class ShotScene(Scene):
 
 
 class BulletsScene(Scene):
+    FIELDS: ClassVar[frozenset[str]] = frozenset({"items", "title"})
+
     def __init__(self, spec: dict[str, Any], ctx: Ctx):
         super().__init__(spec, ctx)
         th, u = ctx.theme, ctx.u
@@ -286,6 +302,8 @@ class BulletsScene(Scene):
 
 
 class StatScene(Scene):
+    FIELDS: ClassVar[frozenset[str]] = frozenset({"value", "label", "eyebrow"})
+
     def __init__(self, spec: dict[str, Any], ctx: Ctx):
         super().__init__(spec, ctx)
         u, maxw = ctx.u, ctx.W - 2 * ctx.margin
@@ -330,6 +348,8 @@ def _colorize(line: str, th: Theme) -> list[Color]:
 
 
 class CodeScene(Scene):
+    FIELDS: ClassVar[frozenset[str]] = frozenset({"code", "highlight", "title"})
+
     def __init__(self, spec: dict[str, Any], ctx: Ctx):
         super().__init__(spec, ctx)
         u = ctx.u
@@ -385,6 +405,11 @@ _COLOR_NAMES = ("accent", "accent2", "fg", "muted")
 
 class DiagramScene(Scene):
     """Boxes and arrows that reveal in order, with flowing packets and state flashes."""
+
+    FIELDS: ClassVar[frozenset[str]] = frozenset({"nodes", "edges", "flash", "title", "node_size"})
+    NODE_FIELDS: ClassVar[frozenset[str]] = frozenset({"id", "label", "x", "y", "vx", "vy", "at", "kind", "sub"})
+    EDGE_FIELDS: ClassVar[frozenset[str]] = frozenset({"from", "to", "label", "at", "color", "bad", "dashed", "flow"})
+    FLASH_FIELDS: ClassVar[frozenset[str]] = frozenset({"node", "at", "text", "color"})
 
     def __init__(self, spec: dict[str, Any], ctx: Ctx):
         super().__init__(spec, ctx)

@@ -159,6 +159,7 @@ the final merge. Unknown keys at any level are errors. No escape hatch: YAML com
   `templates/config.example.yaml`, `~/vidgen-render/shorts/2026-10-29-idempotency-keys.yaml`,
   `2026-10-29-yamlreel-intro.yaml` (uses `music.scale: yo`, `root: G`, a shot with `fit/zoom/focus`), and the owner's
   user config (`voiceover.voice`, `voice_server.url`).
+  Every entry under `themes:` is validated whether or not a scene uses it, so an unused theme with a bad `extends` or colour is an error too.
 - `config.py` also: a `voice_server` value must be url str / client_id non-empty str of at most 200 chars / timeout
   number 1-3600, else `ConfigError`.
 - **Tests** (`tests/test_validation.py`):

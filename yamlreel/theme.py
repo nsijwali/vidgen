@@ -8,6 +8,8 @@ from pathlib import Path
 
 from PIL import ImageFont
 
+from .config import describe_value, unknown_key
+
 Color = tuple[int, int, int]
 
 
@@ -109,15 +111,16 @@ def get_theme(name: str, custom: dict | None = None) -> Theme:
 
     def build(n: str) -> Theme:
         if n in seen:
-            raise ValueError(f"theme {n!r} extends itself ({' -> '.join([*seen, n])})")
+            raise ValueError(f"theme {describe_value(n)} extends itself ({' -> '.join([*seen, n])})")
         seen.append(n)
         if n in custom:
             d = custom[n]
             if not isinstance(d, dict):
                 raise ValueError(f"themes.{n} must be a mapping")
-            unknown = set(d) - {*_THEME_COLORS, "extends", "display", "frame"}
-            if unknown:
-                raise ValueError(f"themes.{n}: unknown key(s) {', '.join(sorted(unknown))}")
+            allowed = {*_THEME_COLORS, "extends", "display", "frame"}
+            for key in d:
+                if key not in allowed:
+                    raise unknown_key(f"themes.{n}", key, allowed, "a theme")
             base = build(d.get("extends", "sumi"))
             fields = {c: parse_color(d[c], f"themes.{n}.{c}") if c in d else getattr(base, c) for c in _THEME_COLORS}
             display = d.get("display", base.display)
@@ -126,7 +129,7 @@ def get_theme(name: str, custom: dict | None = None) -> Theme:
             return Theme(n, display=display, frame=bool(d.get("frame", base.frame)), **fields)
         if n in THEMES:
             return THEMES[n]
-        raise ValueError(f"unknown theme {n!r}; choose from {', '.join([*THEMES, *custom])}")
+        raise ValueError(f"unknown theme {describe_value(n)}; choose from {', '.join([*THEMES, *custom])}")
 
     return build(name)
 

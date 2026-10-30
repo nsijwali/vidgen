@@ -48,12 +48,6 @@ def spec_of(*scenes, **extra):
     return validate({"scenes": list(scenes), **extra})
 
 
-def test_every_template_validates():
-    for p in TEMPLATES.glob("*.yaml"):
-        if not p.name.startswith("config"):
-            load_spec(p)
-
-
 @pytest.mark.parametrize("bad,msg", [
     ({"scenes": []}, "non-empty"),
     ({"scenes": [{"type": "nope"}]}, "unknown type"),

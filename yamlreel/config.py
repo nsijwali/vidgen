@@ -43,11 +43,90 @@ DEFAULTS: dict[str, Any] = {
     "limits": {"max_seconds": 600, "max_scenes": 200},
 }
 HARD_LIMITS = {"max_seconds": 3600, "max_scenes": 1000}
+MAX_CLIENT_ID_CHARS = 200
+VOICE_SERVER_KEYS = ("url", "client_id", "timeout")
 PATH_KEYS = {("watermark", "image"), ("output_dir",), ("font_dir",), ("chromium_path",)}
 
 
 class ConfigError(ValueError):
     pass
+
+
+def describe_key(key: object) -> str:
+    """A mapping key as it can safely appear in a one-line error message (never walks a nested value)."""
+    if isinstance(key, str):
+        text = key
+    elif key is None or isinstance(key, (bool, int, float)):
+        text = repr(key)
+    else:
+        return type(key).__name__
+    return text if text.isprintable() and len(text) <= 60 else repr(text[:60]) + ("..." if len(text) > 60 else "")
+
+
+def describe_value(v: object) -> str:
+    """Any value, quoted if it is text, short and on one line. Collections are named, never printed."""
+    if isinstance(v, str):
+        return repr(v[:60]) + ("..." if len(v) > 60 else "")
+    return describe_key(v)
+
+
+def yaml_problem(e: yaml.YAMLError) -> str:
+    """A YAML error on one line: the problem and where it is."""
+    if isinstance(e, yaml.MarkedYAMLError):
+        mark = e.problem_mark or e.context_mark
+        where = f" at line {mark.line + 1}, column {mark.column + 1}" if mark else ""
+        return " ".join(f"{e.problem or 'invalid YAML'}{where}".split())
+    return " ".join(str(e).split())
+
+
+def unknown_key(path: str, key: object, allowed: Any, what: str, exc: type[Exception] = ValueError,
+                problem: str = "unknown field", note: str = "") -> Exception:
+    """The error for a key that `what` does not have. The one place the "did you mean" hook (issue #13) plugs in,
+    for specs, configs, limits, voice_server and theme entries alike."""
+    from . import specs  # late: specs imports this module
+    return specs._unknown_key(path, key, allowed, what, exc, problem, note)
+
+
+def normalize_music(d: dict[str, Any]) -> None:
+    """`music: koto` is shorthand for `music: {style: koto}`. Done per layer, before paths and merging, so a
+    shorthand in one layer keeps the other settings from the layers below it."""
+    if isinstance(d.get("music"), str):
+        d["music"] = {"style": d["music"]}
+
+
+def clamp_limits(raw: Any) -> dict[str, Any]:
+    """Validate `limits` and cap each value at its absolute limit (HARD_LIMITS). Raises ValueError.
+
+    Clamping, not an error, for a value above the cap: configs that set a larger number keep working."""
+    if not isinstance(raw, dict):
+        raise ValueError("limits must be a mapping")
+    for key in raw:
+        if key not in HARD_LIMITS:
+            raise unknown_key("limits", key, HARD_LIMITS, "limits")
+    out: dict[str, Any] = {}
+    for key, hard in HARD_LIMITS.items():
+        v = raw.get(key, DEFAULTS["limits"][key])
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not v > 0:
+            raise ValueError(f"limits.{key} must be a positive number")
+        if key == "max_scenes" and not isinstance(v, int):
+            raise ValueError("limits.max_scenes must be a positive integer")
+        out[key] = min(v, hard)
+    return out
+
+
+def check_voice_server(vs: dict[str, Any]) -> None:
+    """Type and range of the voice_server settings. Raises ValueError."""
+    for key in vs:
+        if key not in VOICE_SERVER_KEYS:
+            raise unknown_key("voice_server", key, VOICE_SERVER_KEYS, "voice_server")
+    if "url" in vs and (not isinstance(vs["url"], str) or not vs["url"].strip()):
+        raise ValueError("voice_server.url must be a URL string")
+    cid = vs.get("client_id", "x")
+    if not isinstance(cid, str) or not cid.strip() or len(cid) > MAX_CLIENT_ID_CHARS:
+        raise ValueError(f"voice_server.client_id must be a non-empty string of at most {MAX_CLIENT_ID_CHARS} characters")
+    t = vs.get("timeout", 1)
+    if isinstance(t, bool) or not isinstance(t, (int, float)) or not 1 <= t <= 3600:
+        raise ValueError("voice_server.timeout must be a number of seconds between 1 and 3600")
 
 
 @dataclass
@@ -85,13 +164,20 @@ def find_user_config() -> Path:
 
 def _read(path: Path) -> dict[str, Any]:
     try:
-        if path.stat().st_size > MAX_CONFIG_BYTES:
-            raise ConfigError(f"{path}: config file is larger than {MAX_CONFIG_BYTES} bytes")
-        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        too_big = path.stat().st_size > MAX_CONFIG_BYTES
+        text = "" if too_big else path.read_text(encoding="utf-8")
     except OSError as e:
         raise ConfigError(f"cannot read config {path}: {e}") from e
+    except UnicodeDecodeError as e:
+        raise ConfigError(f"cannot read config {path}: not valid UTF-8 ({e.reason})") from e
+    if too_big:
+        raise ConfigError(f"{path}: config file is larger than {MAX_CONFIG_BYTES} bytes")
+    try:
+        raw = yaml.safe_load(text)
     except yaml.YAMLError as e:
-        raise ConfigError(f"{path}: invalid YAML: {e}") from e
+        raise ConfigError(f"{path}: invalid YAML: {yaml_problem(e)}") from e
+    except (ValueError, RecursionError) as e:  # a number or date the parser cannot hold, or nesting too deep
+        raise ConfigError(f"{path}: invalid YAML: {' '.join(str(e).split()) or 'nested too deeply'}") from e
     if raw is None:
         return {}
     if not isinstance(raw, dict):
@@ -137,12 +223,12 @@ def merge(base: dict[str, Any], over: dict[str, Any]) -> dict[str, Any]:
 
 def _check_keys(path: Path, raw: dict[str, Any], trusted: bool) -> None:
     allowed = SHARED_KEYS | (TRUSTED_KEYS if trusted else set())
-    unknown = sorted(set(raw) - allowed)
-    if unknown:
-        hint = ""
-        if set(unknown) & TRUSTED_KEYS:
-            hint = " (allow_paths, allow_private_hosts, chromium_path, font_dir and voice_server are only read from the user config or the CLI)"
-        raise ConfigError(f"{path}: unknown or not-permitted key(s): {', '.join(unknown)}{hint}")
+    for key in raw:  # file order: the first mistake is the one reported
+        if key not in allowed:
+            note = ""
+            if isinstance(key, str) and key in TRUSTED_KEYS:
+                note = "allow_paths, allow_private_hosts, chromium_path, font_dir and voice_server are only read from the user config or the CLI"
+            raise unknown_key("", key, allowed, f"config {path}", ConfigError, "unknown or not-permitted field", note)
 
 
 def load_config(explicit: str | Path | None = None, cwd: Path | None = None,
@@ -162,6 +248,7 @@ def load_config(explicit: str | Path | None = None, cwd: Path | None = None,
     for path, trusted in layers:
         raw = _read(path)
         _check_keys(path, raw, trusted)
+        normalize_music(raw)
         _absolutize(raw, path.resolve().parent)
         if trusted:
             for p in raw.pop("allow_paths", []) or []:
@@ -186,10 +273,10 @@ def load_config(explicit: str | Path | None = None, cwd: Path | None = None,
     font_dir = legacy.env("FONT_DIR")
     if font_dir:
         cfg.font_dirs.append(font_dir)
-    lim = cfg.data.get("limits", {})
-    for k, hard in HARD_LIMITS.items():
-        v = lim.get(k)
-        if not isinstance(v, (int, float)) or v <= 0:
-            raise ConfigError(f"limits.{k} must be a positive number")
-        lim[k] = min(v, hard)
+    try:
+        cfg.data["limits"] = clamp_limits(cfg.data.get("limits"))
+        if cfg.voice_server is not None:
+            check_voice_server(cfg.voice_server)
+    except ValueError as e:
+        raise ConfigError(str(e)) from e
     return cfg
