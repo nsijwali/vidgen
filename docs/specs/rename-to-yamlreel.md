@@ -1,6 +1,6 @@
 # Spec: rename vidgen to yamlreel (0.2.0)
 
-Status: proposed. Branch: `rename/yamlreel`. Owner: nsijwali.
+Status: implemented in 0.2.0 (released 2026-10-29); yamlreel is now on PyPI. Kept as a design record. Owner: nsijwali.
 
 ## 1. Problem and requirements
 "vidgen" collides with ~343 GitHub repos and an unrelated PyPI package. "yamlreel" is free on both.
