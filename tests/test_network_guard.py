@@ -635,6 +635,9 @@ def test_the_response_head_size_limit(monkeypatch, connect_spy):
     assert _via(b"HTTP/1.1 200 OK\r\n" + filler).split(b"\r\n")[0].startswith(b"HTTP/1.1 502")            # no terminator
     assert _via(b"HTTP/1.1 200 OK\r\n" + filler + b"\r\nok").split(b"\r\n")[0].startswith(b"HTTP/1.1 502")  # terminator late
     assert _via(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok").endswith(b"ok")                              # small is fine
+    t0 = time.monotonic()  # an upstream that keeps the connection open must not be waited for
+    assert _via(b"HTTP/1.1 200 OK\r\n" + filler, close=False).split(b"\r\n")[0].startswith(b"HTTP/1.1 502")
+    assert time.monotonic() - t0 < 5
 
 
 def test_the_request_head_size_limit(monkeypatch, connect_spy):
