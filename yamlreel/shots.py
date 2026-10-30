@@ -79,6 +79,25 @@ def full_page_clip_height(vw: int, scale: float, page_height: float) -> int:
     return max(1, min(int(page_height), most))
 
 
+# Chromium flags: without the WebRTC policy, STUN/ICE UDP traffic would go around the pinning proxy.
+CHROMIUM_ARGS = ["--force-webrtc-ip-handling-policy=disable_non_proxied_udp"]
+REFUSED_HEADER = "x-yamlreel-refused"  # set by the pinning proxy on its 403 refusals (lower-case: Playwright's form)
+
+
+def is_proxy_refusal(status: int, headers: dict[str, str]) -> bool:
+    """True only for the pinning proxy's own refusal. A plain 403 from a site is just a page."""
+    return status == 403 and headers.get(REFUSED_HEADER) == "1"
+
+
+def _refusal_error(url: str, response) -> CaptureError:
+    try:
+        reason = response.text().strip()[:300]
+    except Exception:  # noqa: BLE001 - the body is only a hint; the refusal itself is what matters
+        reason = ""
+    detail = f": {reason}" if reason else ""
+    return CaptureError(f"cannot capture {url}: a request to {response.url} was refused by the network policy{detail}")
+
+
 def _request_allowed(url: str, roots: list[Path], allow_private: bool) -> bool:
     scheme = urlparse(url).scheme
     if scheme in ("data", "blob", "about"):
@@ -108,6 +127,15 @@ def _capture(url: str, opts: dict, dest: Path, roots: list[Path], allow_private:
         raise CaptureError("capturing a URL needs playwright: pip install playwright") from e
 
     blocked: list[str] = []
+    refused: list = []  # the pinning proxy's refusals: a hop, redirect or sub-resource the policy denied
+
+    def on_response(response) -> None:
+        if is_proxy_refusal(response.status, response.headers):
+            refused.append(response)
+
+    def check_refused() -> None:
+        if refused:
+            raise _refusal_error(url, refused[0])
 
     def guard(route) -> None:  # every request the page makes, including redirects and sub-resources
         if _request_allowed(route.request.url, roots, allow_private):
@@ -120,24 +148,28 @@ def _capture(url: str, opts: dict, dest: Path, roots: list[Path], allow_private:
         with sync_playwright() as p, PinningProxy(allow_private) as proxy:
             # Everything http(s) goes through the pinning proxy ("<-loopback>" stops Chromium bypassing it for
             # localhost names), so the address checked is the address connected to. file:// stays local.
-            browser = p.chromium.launch(proxy={"server": proxy.url, "bypass": "<-loopback>"},
+            browser = p.chromium.launch(proxy={"server": proxy.url, "bypass": "<-loopback>"}, args=CHROMIUM_ARGS,
                                         **({"executable_path": chromium} if chromium else {}))
             try:
                 ctx = browser.new_context(viewport={"width": vw, "height": vh}, device_scale_factor=scale,
                                           accept_downloads=False, service_workers="block")
                 ctx.route("**/*", guard)
+                ctx.on("response", on_response)
                 page = ctx.new_page()
                 try:
                     page.goto(url, wait_until="networkidle", timeout=30000)
                 except PwError:
                     if blocked and blocked[0] == url:
                         raise
+                    check_refused()
                     page.goto(url, wait_until="load", timeout=30000)
+                check_refused()
                 for sel in opts.get("click", []):
                     page.click(sel, timeout=5000)
                 if "scroll_y" in opts:
                     page.evaluate("y => window.scrollTo(0, y)", int(opts["scroll_y"]))
                 page.wait_for_timeout(int(opts.get("wait_ms", 800)))
+                check_refused()  # also catches a sub-resource refused while the page settled
                 if opts.get("full_page", False):
                     # a very tall page would exceed MAX_CAPTURE_PIXELS: keep only the top of it
                     height = page.evaluate("Math.max(document.documentElement.scrollHeight, "
