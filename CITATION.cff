@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+message: "If you use yamlreel, please cite it as below."
+title: "yamlreel: turn a YAML file into a narrated explainer video"
+type: software
+authors:
+  - given-names: Nitin
+    family-names: Sijwali
+    alias: nsijwali
+version: 0.2.1
+date-released: 2026-10-29
+license: MIT
+repository-code: "https://github.com/nsijwali/yamlreel"
+url: "https://nsijwali.github.io/yamlreel/"
+keywords:
+  - text-to-video
+  - video-generation
+  - youtube-shorts
+  - explainer-video
+  - yaml
+  - python
+abstract: >-
+  yamlreel renders short explainer videos (system design, code tips, project
+  demos) from a YAML spec: animated diagrams, typed code, original music and an
+  optional voiceover in your own voice, rendered locally.
