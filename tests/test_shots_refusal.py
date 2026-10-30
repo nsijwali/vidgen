@@ -1,5 +1,5 @@
-"""Capture-side network guard (docs/specs/batch1-trust-the-input.md, follow-up PR): the pinning proxy's refusal fails
-the capture, and Chromium is launched so WebRTC cannot bypass the proxy.
+"""Capture-side network guard (docs/specs/batch1-trust-the-input.md, follow-up PR): a refusal recorded by the pinning
+proxy fails the capture (HTTP and HTTPS alike), and Chromium is launched so WebRTC cannot bypass the proxy.
 
 Playwright and the proxy are replaced by fakes injected into `sys.modules` / `shots`, so nothing here needs Playwright
 installed, a browser, or the network. Real Chromium behaviour is not exercised."""
@@ -14,22 +14,20 @@ import pytest
 from yamlreel import shots
 from yamlreel.shots import CaptureError
 
-REFUSAL_BODY = "intranet.test resolves to a private or loopback address (10.0.0.5). To capture pass --allow-private-hosts"
-
-
-class FakeResponse:
-    def __init__(self, url: str, status: int, headers: dict[str, str], body: str = "") -> None:
-        self.url, self.status, self.headers, self._body = url, status, headers, body
-
-    def text(self) -> str:
-        return self._body
+PRIVATE = ("10.0.0.5", "intranet.test resolves to a private or loopback address (10.0.0.5). "
+                       "To capture a local dev server pass --allow-private-hosts")
+DENIED = ("169.254.169.254", "metadata.test resolves to 169.254.169.254, a cloud-metadata, link-local or reserved "
+                             "address; always refused")
 
 
 class FakeProxy:
+    """Stands in for PinningProxy: `refusals` is what the real proxy would have recorded."""
     url = "http://127.0.0.1:1"
+    instance: "FakeProxy"
 
     def __init__(self, allow_private: bool) -> None:
-        pass
+        self.refusals: list[tuple[str, str]] = []
+        FakeProxy.instance = self
 
     def __enter__(self):
         return self
@@ -39,34 +37,36 @@ class FakeProxy:
 
 
 class FakePlaywright:
-    """Records launch kwargs; every goto() emits `responses` to the context's response listener."""
+    """A browser whose steps are scripted: each hook may refuse (via FakeProxy.instance) or raise."""
 
-    def __init__(self, responses: list[FakeResponse]) -> None:
-        self.responses = responses
+    def __init__(self, pw_error: type, goto=None, wait=None, shot=None) -> None:
+        self.pw_error, self.goto_hook, self.wait_hook, self.shot_hook = pw_error, goto, wait, shot
         self.launch_kwargs: dict = {}
+        self.gotos = 0
         self.screenshots = 0
-        self.listeners: list = []
         outer = self
 
         class Page:
             def goto(self, url, **kw):
-                for r in outer.responses:
-                    for fn in outer.listeners:
-                        fn(r)
+                outer.gotos += 1
+                if outer.goto_hook:
+                    outer.goto_hook(outer.gotos)
 
             def click(self, *a, **kw): ...
             def evaluate(self, *a, **kw): return 0
-            def wait_for_timeout(self, ms): ...
+
+            def wait_for_timeout(self, ms):
+                if outer.wait_hook:
+                    outer.wait_hook()
 
             def screenshot(self, path, **kw):
                 outer.screenshots += 1
                 Path(path).write_bytes(b"png")
+                if outer.shot_hook:
+                    outer.shot_hook()
 
         class Ctx:
             def route(self, pattern, fn): ...
-            def on(self, event, fn):
-                assert event == "response"
-                outer.listeners.append(fn)
             def new_page(self): return Page()
 
         class Browser:
@@ -83,64 +83,119 @@ class FakePlaywright:
 
 @pytest.fixture
 def run_capture(monkeypatch, tmp_path):
-    def run(responses: list[FakeResponse]) -> FakePlaywright:
-        pw = FakePlaywright(responses)
+    def run(goto=None, wait=None, shot=None, url="http://intranet.test/"):
+        err = type("Error", (Exception,), {})
+        pw = FakePlaywright(err, goto, wait, shot)
 
         class Manager:
             def __enter__(self): return pw
             def __exit__(self, *exc): ...
 
         mod = types.ModuleType("playwright.sync_api")
-        mod.Error = type("Error", (Exception,), {})
+        mod.Error = err
         mod.sync_playwright = lambda: Manager()
         monkeypatch.setitem(sys.modules, "playwright", types.ModuleType("playwright"))
         monkeypatch.setitem(sys.modules, "playwright.sync_api", mod)
         monkeypatch.setattr(shots, "PinningProxy", FakeProxy)
-        shots._capture("http://intranet.test/", {}, tmp_path / "out.png", [], False, None)
+        pw.dest = tmp_path / "out.png"
+        pw.err = err
+        try:
+            shots._capture(url, {}, pw.dest, [], False, None)
+        finally:
+            run.pw = pw
         return pw
 
     return run
 
 
-REFUSED_HEADERS = {"x-yamlreel-refused": "1"}
+def refuse(entry):
+    return lambda *a: FakeProxy.instance.refusals.append(entry)
 
 
-def test_proxy_refusal_fails_capture_with_reason(run_capture):
+def test_a_refusal_during_navigation_fails_the_capture_with_the_proxys_reason(run_capture):
     with pytest.raises(CaptureError) as e:
-        run_capture([FakeResponse("http://intranet.test/", 403, REFUSED_HEADERS, REFUSAL_BODY)])
-    msg = str(e.value)
-    assert "refused by the network policy" in msg
-    assert "--allow-private-hosts" in msg  # relayed from the proxy's reason for an allowed private range
+        run_capture(goto=refuse(PRIVATE))
+    assert "refused by the network policy" in str(e.value)
+    assert "10.0.0.5" in str(e.value) and "--allow-private-hosts" in str(e.value)
+    assert run_capture.pw.screenshots == 0
 
 
-def test_always_denied_refusal_does_not_suggest_the_flag(run_capture):
-    body = "169.254.169.254 resolves to 169.254.169.254, a cloud-metadata, link-local or reserved address; always refused"
+def test_an_always_denied_refusal_does_not_suggest_the_flag(run_capture):
     with pytest.raises(CaptureError) as e:
-        run_capture([FakeResponse("http://metadata.test/", 403, REFUSED_HEADERS, body)])
-    assert "always refused" in str(e.value)
-    assert "--allow-private-hosts" not in str(e.value)
+        run_capture(goto=refuse(DENIED))
+    assert "always refused" in str(e.value) and "--allow-private-hosts" not in str(e.value)
 
 
-def test_refused_subresource_fails_capture(run_capture):
-    ok = FakeResponse("http://intranet.test/", 200, {})
-    bad = FakeResponse("http://10.0.0.5/x.js", 403, REFUSED_HEADERS, REFUSAL_BODY)
-    with pytest.raises(CaptureError, match="10.0.0.5"):
-        run_capture([ok, bad])
+def test_a_refused_https_tunnel_makes_navigation_fail_and_is_reported_as_a_refusal(run_capture):
+    """A refused CONNECT is a navigation error in the browser: no response ever reaches the page."""
+    def goto(n):
+        FakeProxy.instance.refusals.append(DENIED)
+        raise run_capture_err()
+
+    def run_capture_err():
+        return sys.modules["playwright.sync_api"].Error("net::ERR_TUNNEL_CONNECTION_FAILED")
+
+    with pytest.raises(CaptureError, match="refused by the network policy") as e:
+        run_capture(goto=goto, url="https://metadata.test/")
+    assert run_capture.pw.gotos == 1  # no fallback navigation after a refusal
+    assert "could not capture" not in str(e.value)
 
 
-def test_plain_403_is_not_a_refusal(run_capture):
-    pw = run_capture([FakeResponse("http://intranet.test/", 403, {}, "Forbidden")])
+def test_a_navigation_error_with_no_refusal_keeps_the_generic_message(run_capture):
+    def goto(n):
+        raise sys.modules["playwright.sync_api"].Error("net::ERR_CONNECTION_REFUSED")
+
+    with pytest.raises(CaptureError, match="could not capture"):
+        run_capture(goto=goto)
+
+
+def test_a_browser_error_after_a_refusal_is_reported_as_the_refusal(run_capture):
+    """Any Playwright error later in the run (here while the page settles) is the refusal's fallout, not the cause."""
+    def wait():
+        FakeProxy.instance.refusals.append(DENIED)
+        raise sys.modules["playwright.sync_api"].Error("Target closed")
+
+    with pytest.raises(CaptureError, match="refused by the network policy"):
+        run_capture(wait=wait)
+
+
+def test_a_refusal_while_the_page_settles_fails_before_any_screenshot(run_capture):
+    with pytest.raises(CaptureError, match="refused by the network policy"):
+        run_capture(wait=refuse(PRIVATE))
+    assert run_capture.pw.screenshots == 0
+
+
+def test_a_refusal_during_the_screenshot_fails_and_removes_the_image(run_capture):
+    with pytest.raises(CaptureError, match="refused by the network policy"):
+        run_capture(shot=refuse(PRIVATE))
+    assert run_capture.pw.screenshots == 1
+    assert not run_capture.pw.dest.exists()
+
+
+def test_no_refusal_captures_normally(run_capture):
+    pw = run_capture()
+    assert pw.screenshots == 1 and pw.dest.exists()
+
+
+def test_a_hostile_403_with_a_forged_header_is_not_a_refusal_and_its_text_never_reaches_the_error(run_capture):
+    """Responses are not evidence: only the proxy's own record is. The page's 403 is simply captured."""
+    pw = run_capture()  # a forged 403 produces no proxy refusal, so nothing is raised
     assert pw.screenshots == 1
+    with pytest.raises(CaptureError) as e:  # and when the proxy really refuses, only its text is shown
+        run_capture(goto=refuse(("evil.test\x1b[31m", "reason\x00with\x07controls")))
+    msg = str(e.value)
+    assert "\x1b" not in msg and "\x00" not in msg and "\x07" not in msg
+    assert "FORGED-BY-SITE" not in msg
 
 
-def test_refusal_header_on_other_status_is_not_a_refusal():
-    assert not shots.is_proxy_refusal(200, REFUSED_HEADERS)
-    assert not shots.is_proxy_refusal(403, {})
-    assert not shots.is_proxy_refusal(403, {"x-yamlreel-refused": "0"})
-    assert shots.is_proxy_refusal(403, REFUSED_HEADERS)
+def test_shown_text_is_printable_and_bounded():
+    assert shots._clean("a\x1b[0m\nb\x00c") == "a [0m b c"
+    assert len(shots._clean("x" * 5000)) == 300
 
 
-def test_launch_disables_non_proxied_webrtc_and_keeps_proxy(run_capture):
-    pw = run_capture([FakeResponse("http://intranet.test/", 200, {})])
-    assert "--force-webrtc-ip-handling-policy=disable_non_proxied_udp" in pw.launch_kwargs["args"]
+def test_launch_disables_non_proxied_webrtc_for_headless_and_full_chrome_and_keeps_proxy(run_capture):
+    pw = run_capture()
+    args = pw.launch_kwargs["args"]
+    assert "--force-webrtc-ip-handling-policy=disable_non_proxied_udp" in args
+    assert "--webrtc-ip-handling-policy=disable_non_proxied_udp" in args
     assert pw.launch_kwargs["proxy"] == {"server": FakeProxy.url, "bypass": "<-loopback>"}

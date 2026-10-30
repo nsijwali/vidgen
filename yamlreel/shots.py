@@ -79,23 +79,21 @@ def full_page_clip_height(vw: int, scale: float, page_height: float) -> int:
     return max(1, min(int(page_height), most))
 
 
-# Chromium flags: without the WebRTC policy, STUN/ICE UDP traffic would go around the pinning proxy.
-CHROMIUM_ARGS = ["--force-webrtc-ip-handling-policy=disable_non_proxied_udp"]
-REFUSED_HEADER = "x-yamlreel-refused"  # set by the pinning proxy on its 403 refusals (lower-case: Playwright's form)
+# Chromium flags: without the WebRTC policy, STUN/ICE UDP traffic would go around the pinning proxy. Headless
+# shell reads the first spelling, full Chrome/Chromium the second.
+CHROMIUM_ARGS = ["--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+                 "--webrtc-ip-handling-policy=disable_non_proxied_udp"]
 
 
-def is_proxy_refusal(status: int, headers: dict[str, str]) -> bool:
-    """True only for the pinning proxy's own refusal. A plain 403 from a site is just a page."""
-    return status == 403 and headers.get(REFUSED_HEADER) == "1"
+def _clean(text: str, limit: int = 300) -> str:
+    """Printable characters only, bounded: anything shown to the user that a remote party could influence."""
+    return "".join(c if c.isprintable() else " " for c in text)[:limit]
 
 
-def _refusal_error(url: str, response) -> CaptureError:
-    try:
-        reason = response.text().strip()[:300]
-    except Exception:  # noqa: BLE001 - the body is only a hint; the refusal itself is what matters
-        reason = ""
-    detail = f": {reason}" if reason else ""
-    return CaptureError(f"cannot capture {url}: a request to {response.url} was refused by the network policy{detail}")
+def _refusal_error(url: str, refusals: list[tuple[str, str]]) -> CaptureError:
+    host, reason = refusals[0]  # the reason comes only from the proxy's own record, never from a response
+    return CaptureError(f"cannot capture {_clean(url)}: a request to {_clean(host, 100)} was refused by the "
+                        f"network policy: {_clean(reason)}")
 
 
 def _request_allowed(url: str, roots: list[Path], allow_private: bool) -> bool:
@@ -127,15 +125,6 @@ def _capture(url: str, opts: dict, dest: Path, roots: list[Path], allow_private:
         raise CaptureError("capturing a URL needs playwright: pip install playwright") from e
 
     blocked: list[str] = []
-    refused: list = []  # the pinning proxy's refusals: a hop, redirect or sub-resource the policy denied
-
-    def on_response(response) -> None:
-        if is_proxy_refusal(response.status, response.headers):
-            refused.append(response)
-
-    def check_refused() -> None:
-        if refused:
-            raise _refusal_error(url, refused[0])
 
     def guard(route) -> None:  # every request the page makes, including redirects and sub-resources
         if _request_allowed(route.request.url, roots, allow_private):
@@ -144,8 +133,16 @@ def _capture(url: str, opts: dict, dest: Path, roots: list[Path], allow_private:
             blocked.append(route.request.url)
             route.abort()
 
+    proxy = PinningProxy(allow_private)
+
+    def check_refused() -> None:
+        """The proxy sees every http(s) request, CONNECT tunnels included, so its own record is the only evidence."""
+        refusals = proxy.refusals
+        if refusals:
+            raise _refusal_error(url, refusals)
+
     try:
-        with sync_playwright() as p, PinningProxy(allow_private) as proxy:
+        with sync_playwright() as p, proxy:
             # Everything http(s) goes through the pinning proxy ("<-loopback>" stops Chromium bypassing it for
             # localhost names), so the address checked is the address connected to. file:// stays local.
             browser = p.chromium.launch(proxy={"server": proxy.url, "bypass": "<-loopback>"}, args=CHROMIUM_ARGS,
@@ -154,14 +151,13 @@ def _capture(url: str, opts: dict, dest: Path, roots: list[Path], allow_private:
                 ctx = browser.new_context(viewport={"width": vw, "height": vh}, device_scale_factor=scale,
                                           accept_downloads=False, service_workers="block")
                 ctx.route("**/*", guard)
-                ctx.on("response", on_response)
                 page = ctx.new_page()
                 try:
                     page.goto(url, wait_until="networkidle", timeout=30000)
                 except PwError:
+                    check_refused()
                     if blocked and blocked[0] == url:
                         raise
-                    check_refused()
                     page.goto(url, wait_until="load", timeout=30000)
                 check_refused()
                 for sel in opts.get("click", []):
@@ -178,8 +174,14 @@ def _capture(url: str, opts: dict, dest: Path, roots: list[Path], allow_private:
                     page.screenshot(path=str(dest), full_page=True, clip=clip)
                 else:
                     page.screenshot(path=str(dest))
+                try:
+                    check_refused()  # a request refused while the screenshot was taken
+                except CaptureError:
+                    dest.unlink(missing_ok=True)
+                    raise
             finally:
                 browser.close()
     except PwError as e:
+        check_refused()
         extra = f" (blocked request to {blocked[0]})" if blocked else ""
-        raise CaptureError(f"could not capture {url}{extra}: {e}") from e
+        raise CaptureError(f"could not capture {_clean(url)}{extra}: {e}") from e

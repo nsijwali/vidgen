@@ -726,3 +726,55 @@ def test_a_response_has_an_overall_deadline(monkeypatch, connect_spy):
             assert got.split(b"\r\n")[0].startswith(b"HTTP/1.1 502")
     finally:
         up.close()
+
+
+@pytest.mark.parametrize("request_bytes,host", [
+    (b"CONNECT 169.254.169.254:443 HTTP/1.1\r\n\r\n", "169.254.169.254"),
+    (b"CONNECT 100.64.0.1:443 HTTP/1.1\r\n\r\n", "100.64.0.1"),
+    (b"GET http://100.64.0.1/x HTTP/1.1\r\nHost: x\r\n\r\n", "100.64.0.1"),
+])
+def test_the_proxy_records_every_refusal_itself(request_bytes, host, connect_spy):
+    """HTTPS refusals never reach the page as a response, so the capture reads the proxy's own record."""
+    from yamlreel.pinproxy import PinningProxy
+    with PinningProxy(allow_private=False) as px:
+        assert px.refusals == []
+        _raw(px.url, request_bytes)
+        refusals = px.refusals
+    assert len(refusals) == 1 and refusals[0][0] == host and refusals[0][1]
+
+
+def test_an_allowed_request_records_no_refusal(connect_spy):
+    from yamlreel.pinproxy import PinningProxy
+    srv = _redirecting_server("http://127.0.0.1/")
+    try:
+        with PinningProxy(allow_private=True) as px:
+            _get(px.url, f"http://127.0.0.1:{srv.server_address[1]}/")
+            assert px.refusals == []
+    finally:
+        srv.shutdown()
+
+
+def test_the_refused_header_is_stripped_from_upstream_responses(connect_spy):
+    """Only the proxy may say "refused": a site that sends the header must not be able to forge it."""
+    from yamlreel.pinproxy import PinningProxy
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(403)
+            self.send_header("X-Yamlreel-Refused", "1")
+            self.send_header("Content-Length", "2")
+            self.end_headers()
+            self.wfile.write(b"no")
+
+        def log_message(self, *a): ...
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        with PinningProxy(allow_private=True) as px:
+            resp = _get(px.url, f"http://127.0.0.1:{srv.server_address[1]}/")
+            assert px.refusals == []
+    finally:
+        srv.shutdown()
+    assert b" 403 " in resp.split(b"\r\n")[0] + b" "
+    assert b"x-yamlreel-refused" not in resp.lower()
