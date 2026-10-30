@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import yaml
+from fakes import _fake_voice_server, _tone_wav_bytes  # tests/ is on sys.path (pytest rootdir import mode)
 
 from yamlreel import __version__, legacy, music
 from yamlreel.cli import main
@@ -13,7 +14,6 @@ from yamlreel.safety import UnsafeInput, check_http_url, resolve_local
 from yamlreel.shots import CaptureError
 from yamlreel.specs import FORMATS, SpecError, load_spec, validate
 from yamlreel.theme import get_theme
-from fakes import _fake_voice_server, _tone_wav_bytes
 from yamlreel.textkit import make_block
 
 TEMPLATES = Path(__file__).parent.parent / "yamlreel" / "templates"

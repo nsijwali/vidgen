@@ -14,11 +14,11 @@ import base64
 import hashlib
 import json
 import wave
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.error import URLError
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 from urllib.request import Request, urlopen
 
 import numpy as np
@@ -40,26 +40,24 @@ class VoiceServer:
     url: str = DEFAULT_URL
     client_id: str = "yamlreel"
     timeout: float = 600.0
-    _port: int | None = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         try:
-            u = urlparse(self.url)
-            port = u.port
+            u = urlsplit(self.url)
+            u.port  # noqa: B018 (raises ValueError for a bad port)
         except ValueError as e:
             raise VoiceError(f"voice_server.url is not a valid URL ({e}): {self.url!r}") from e
         if u.scheme not in ("http", "https") or not u.hostname:
             raise VoiceError(f"voice_server.url must be an http(s) URL, got {self.url!r}")
-        self._port = port
 
     def identity(self) -> str:
         """`scheme://host:port/path`: which server speaks. Never includes userinfo, query or fragment, so a
-        credential in the URL cannot end up in a cache key."""
-        u = urlparse(self.url)
+        credential in the URL cannot end up in a cache key. `;params` stay in the path."""
+        u = urlsplit(self.url)
         host = u.hostname or ""
         if ":" in host:
             host = f"[{host}]"
-        port = self._port if self._port is not None else (443 if u.scheme == "https" else 80)
+        port = u.port if u.port is not None else (443 if u.scheme == "https" else 80)
         return f"{u.scheme}://{host}:{port}{u.path or '/'}"
 
 

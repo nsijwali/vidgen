@@ -1,4 +1,6 @@
 """Narration cache key and timing (spec batch1 PR C)."""
+import subprocess
+
 import numpy as np
 import pytest
 
@@ -51,6 +53,14 @@ def test_plan_durations_floor_on_a_beat_boundary_does_not_add_a_beat():
 def test_plan_durations_without_snap_is_max_of_length_and_floor():
     spec = _spec(1.1, 3.0, snap=False)
     assert plan_durations(spec, {0: 1.5, 1: 1.0}) == pytest.approx([1.5, 3.0])
+
+
+def test_plan_durations_epsilon_keeps_an_exact_one_beat_floor_at_one_beat():
+    # 62370 samples + 0.3 s lead is exactly one beat at 35 bpm; float noise must not add a second beat
+    floor = voice_mod.min_scene_seconds(np.zeros(62370, dtype=np.float32), 0.0)
+    spec = _spec(0.5)
+    spec["music"] = {"style": "none", "bpm": 35, "snap": True}
+    assert plan_durations(spec, {0: floor}) == pytest.approx([60 / 35])
 
 
 def test_plan_durations_snap_needs_a_bpm():
@@ -196,3 +206,39 @@ def test_the_same_server_reuses_the_cache(tmp_path):
     finally:
         srv.shutdown()
     assert len(calls) == 1
+
+
+def _decode_mono_8k(video):
+    """Decode a video's audio to mono 8 kHz float samples with the bundled ffmpeg (ffprobe may be absent)."""
+    ffmpeg = render_mod.ffmpeg_exe()
+    out = subprocess.run([ffmpeg, "-loglevel", "error", "-i", str(video), "-vn", "-ac", "1", "-ar", "8000",
+                          "-f", "s16le", "-"], capture_output=True, check=True).stdout
+    return np.frombuffer(out, dtype="<i2").astype(np.float32) / 32768.0
+
+
+def test_narration_without_music_is_audible_to_the_end(tmp_path):
+    srv, calls, url = _fake_voice_server(seconds=1.0)
+    try:
+        spec = _spec(1.0, 1.0, snap=False, narrate=True)
+        res = render(spec, "square", tmp_path / "o", fps=5, scale=0.1, contact=False,
+                     runtime=Runtime(roots=[tmp_path], voice=VoiceServer(url=url)))
+    finally:
+        srv.shutdown()
+    assert len(calls) == 2
+    audio = _decode_mono_8k(res["video"])
+    rate = 8000
+    # scenes are 1.5 s each (1.0 s of speech + 0.5 s gap); speech runs from start + lead for 1.0 s
+    for start in (0.0, 1.5):
+        a, b = start + voice_mod.NARRATION_LEAD + 0.1, start + voice_mod.NARRATION_LEAD + 0.9
+        t = a
+        while t + 0.1 <= b + 1e-9:
+            win = audio[int(t * rate):int((t + 0.1) * rate)]
+            assert float(np.sqrt(np.mean(win ** 2))) > 0.05, f"silent at {t:.1f}s"
+            t += 0.1
+
+
+def test_identity_keeps_path_params_and_follows_a_reassigned_url():
+    assert VoiceServer(url="http://h/mcp/;a").identity() != VoiceServer(url="http://h/mcp/;b").identity()
+    s = VoiceServer(url="http://h:81/mcp/")
+    s.url = "http://h/mcp/"
+    assert s.identity() == "http://h:80/mcp/"

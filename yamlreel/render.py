@@ -337,7 +337,9 @@ def render(spec: dict[str, Any], fmt: str, out_dir: Path, fps: int = 30, scale: 
             elif audio:
                 cmd += ["-af", music_f.format(vol=vol)]
             else:
-                cmd += ["-af", f"atrim=0:{total:.3f},asetpts=PTS-STARTPTS,afade=t=out:st={fade_out:.3f}:d=1.0"]
+                # Narration only: never fade the speech; just a tiny fade after it to avoid a click at the end.
+                end_fade = max(0.0, total - 0.05)
+                cmd += ["-af", f"atrim=0:{total:.3f},asetpts=PTS-STARTPTS,afade=t=out:st={end_fade:.3f}:d=0.05"]
             cmd += ["-c:a", "aac", "-b:a", "192k", "-ac", "2"]
         cmd += ["-movflags", "+faststart", "-t", f"{total:.3f}", str(out / "video.mp4")]
         errlog = open(work / "ffmpeg.log", "wb")
