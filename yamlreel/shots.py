@@ -12,6 +12,18 @@ from .pinproxy import PinningProxy
 from .safety import UnsafeInput, check_http_url, file_url_to_path, resolve_local
 
 MAX_IMAGE_PIXELS = 64_000_000  # refuse decompression bombs
+MAX_CAPTURE_PIXELS = 36_000_000  # viewport width x height x scale^2 of one capture
+DEFAULT_VIEWPORT = (1920, 1080)
+DEFAULT_SCALE = 2
+
+
+def capture_size_problem(vw: int, vh: int, scale: float) -> str | None:
+    """Why a capture of this size is refused, or None."""
+    pixels = vw * vh * scale * scale
+    if pixels > MAX_CAPTURE_PIXELS:
+        return (f"{vw}x{vh} at scale {scale:g} is {int(pixels)} pixels; "
+                f"the limit is {MAX_CAPTURE_PIXELS} (MAX_CAPTURE_PIXELS)")
+    return None
 
 
 class CaptureError(RuntimeError):
