@@ -59,16 +59,76 @@ def test_refused_without_the_private_flag(host):
         check_http_url(_url(host), allow_private=False)
 
 
-REFUSED_EVEN_WITH_FLAG = [
+ALWAYS_REFUSED = [
     "169.254.169.254", "169.254.170.2", "fd00:ec2::254", "100.100.100.200", "192.0.0.192",
     "METADATA.GOOGLE.INTERNAL.", "::ffff:169.254.169.254", "64:ff9b::a9fe:a9fe", "0.0.0.0", "::", "224.0.0.1",
+    "fec0::1", "ff02::1", "0.1.2.3", "64:ff9b:1::a9fe:a9fe", "instance-data.", "metadata.goog",
+    "2002:a9fe:a9fe::1", _teredo("169.254.169.254"), "fd20:ce::254", "fd00:c1::a9fe:a9fe", "168.63.129.16",
+    "metadata.tencentyun.com", "\uff4d\uff45\uff54\uff41\uff44\uff41\uff54\uff41.google.internal",
+    "\uff11\uff12\uff17\uff0e\uff11",
 ]
+ALWAYS_MESSAGE = r"always refused|cloud metadata host refused|non-standard numeric address"
+# Refused with and without the flag, but as "not a public internet address" rather than as metadata/reserved.
+NOT_PUBLIC = ["3fff::1", "5f00::1", "4000::1", "200::1", "::ffff:0:a9fe:a9fe", "192.0.2.1", "198.51.100.7",
+              "203.0.113.9", "2001:db8::1", "100::1", "2001:1::1", "198.18.0.1"]
 
 
-@pytest.mark.parametrize("host", REFUSED_EVEN_WITH_FLAG)
-def test_refused_even_with_the_private_flag(host):
-    with pytest.raises(UnsafeInput):
-        check_http_url(_url(host), allow_private=True)
+@pytest.mark.parametrize("host", ALWAYS_REFUSED)
+@pytest.mark.parametrize("flag", [True, False])
+def test_refused_even_with_the_private_flag(host, flag):
+    with pytest.raises(UnsafeInput, match=ALWAYS_MESSAGE):
+        check_http_url(_url(host), allow_private=flag)
+
+
+@pytest.mark.parametrize("host", NOT_PUBLIC)
+@pytest.mark.parametrize("flag", [True, False])
+def test_non_public_ranges_are_refused_with_and_without_the_flag(host, flag):
+    with pytest.raises(UnsafeInput, match="not a public internet address"):
+        check_http_url(_url(host), allow_private=flag)
+
+
+@pytest.mark.parametrize("flag", [True, False])
+def test_verdicts_come_from_the_tables_not_from_is_global(flag, monkeypatch):
+    """An interpreter whose is_global says True for everything (older tables) must not change any verdict."""
+    monkeypatch.setattr(ipaddress.IPv4Address, "is_global", property(lambda self: True))
+    monkeypatch.setattr(ipaddress.IPv6Address, "is_global", property(lambda self: True))
+    for host in ALWAYS_REFUSED:
+        with pytest.raises(UnsafeInput, match=ALWAYS_MESSAGE):
+            check_http_url(_url(host), allow_private=flag)
+    for host in NOT_PUBLIC:
+        with pytest.raises(UnsafeInput, match="not a public internet address"):
+            check_http_url(_url(host), allow_private=flag)
+    check_http_url(_url("93.184.216.34"), allow_private=flag)
+    if not flag:
+        for host in ("100.64.0.1", "10.0.0.1", "127.0.0.1", "fd12:3456::1"):
+            with pytest.raises(UnsafeInput, match="--allow-private-hosts"):
+                check_http_url(_url(host), allow_private=False)
+
+
+def test_six_to_four_is_judged_by_the_embedded_ipv4_and_keeps_the_v6_address():
+    assert pinned_ips("2002:808:808::1", False) == ["2002:808:808::1"]
+
+
+def test_unwrapped_wrapper_message_names_the_embedded_address():
+    with pytest.raises(UnsafeInput, match=r"\(embeds 169\.254\.169\.254\), a cloud-metadata"):
+        check_http_url("http://[2002:a9fe:a9fe::1]/", True)
+
+
+def test_bad_urls_and_hosts_are_unsafe_input_not_other_exceptions():
+    for url in ("http://[::ffff:127.1]/", "http://[abc]/", "http://[::1/", "http://[::g]/", "http://a..b/",
+                "http://" + "a" * 70 + ".test/"):
+        with pytest.raises(UnsafeInput):
+            check_http_url(url, allow_private=True)
+    with pytest.raises(UnsafeInput, match="not a valid IPv6 address"):
+        pinned_ips("::ffff:127.1", True)
+
+
+def test_scope_ids_are_stripped_and_judged_as_the_address():
+    assert pinned_ips("::1%lo0", True) == ["::1"]
+    with pytest.raises(UnsafeInput, match=r"::1%lo0 resolves to a private or loopback address \(::1\).*--allow-private-hosts"):
+        pinned_ips("::1%lo0", False)
+    with pytest.raises(UnsafeInput, match="always refused"):
+        pinned_ips("FE80::1%LO0", True)
 
 
 @pytest.mark.parametrize("host", ["100.64.0.1", "::ffff:10.0.0.5", "fd12:3456::1", "172.16.0.1", "127.0.0.1",
@@ -80,12 +140,6 @@ def test_private_ranges_are_allowed_with_the_flag(host):
 @pytest.mark.parametrize("host", ["93.184.216.34", "2606:4700:4700::1111"])
 def test_public_addresses_are_allowed_without_the_flag(host):
     check_http_url(_url(host), allow_private=False)
-
-
-def test_extra_non_public_ranges_are_refused_by_the_explicit_table():
-    for host in ("192.0.2.1", "198.51.100.7", "203.0.113.9", "2001:db8::1", "100::1", "2001:1::1"):
-        with pytest.raises(UnsafeInput, match="not a public internet address"):
-            check_http_url(_url(host), allow_private=True)
 
 
 def test_mixed_answers_are_judged_as_a_whole():
@@ -226,6 +280,115 @@ def test_connect_to_a_forbidden_address_gets_403(target, allow_private, connect_
         resp = _raw(px.url, f"CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n\r\n".encode())
     assert resp.split(b"\r\n")[0].startswith(b"HTTP/1.1 403")
     assert [c for c in connect_spy if c[1] == 443] == []  # the only connection is the test client to the proxy
+
+
+@pytest.mark.parametrize("target", ["100.64.0.1:+443", "100.64.0.1:4_43", "127.0.0.1:0", "127.0.0.1:65536",
+                                    "127.0.0.1:"])
+def test_connect_ports_must_be_plain_ascii_digits_in_range(target, connect_spy):
+    from yamlreel.pinproxy import PinningProxy
+    with PinningProxy(allow_private=True) as px:
+        resp = _raw(px.url, f"CONNECT {target} HTTP/1.1\r\n\r\n".encode())
+    assert resp.split(b"\r\n")[0].startswith(b"HTTP/1.1 400")
+    assert b"X-Yamlreel-Refused" not in resp
+    assert [c for c in connect_spy if c[1] in (0, 443, 65536)] == []
+
+
+def test_proxy_refusals_carry_the_refused_header(connect_spy):
+    from yamlreel.pinproxy import PinningProxy
+    with PinningProxy(allow_private=False) as px:
+        plain = _get(px.url, "http://100.64.0.1/")
+        tunnel = _raw(px.url, b"CONNECT 169.254.169.254:443 HTTP/1.1\r\n\r\n")
+    for resp in (plain, tunnel):
+        head = resp.split(b"\r\n\r\n")[0].decode("latin-1").lower().split("\r\n")
+        assert head[0].startswith("http/1.1 403")
+        assert "x-yamlreel-refused: 1" in head
+
+
+def _keepalive_upstream(received: list[bytes]):
+    """A loopback server that ignores `Connection: close` and answers every request it sees on a connection."""
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(5)
+
+    def serve():
+        while True:
+            try:
+                c, _ = srv.accept()
+            except OSError:
+                return
+
+            def one(c=c):
+                buf = b""
+                while data := c.recv(65536):
+                    buf += data
+                    while b"\r\n\r\n" in buf:
+                        head, _, buf = buf.partition(b"\r\n\r\n")
+                        received.append(head.split(b"\r\n")[0])
+                        c.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello")
+
+            threading.Thread(target=one, daemon=True).start()
+
+    threading.Thread(target=serve, daemon=True).start()
+    return srv
+
+
+@pytest.mark.parametrize("pipelined", [False, True])
+def test_a_second_request_on_the_same_proxy_connection_is_never_forwarded(pipelined, connect_spy):
+    from yamlreel.pinproxy import PinningProxy
+    received: list[bytes] = []
+    up = _keepalive_upstream(received)
+    port = up.getsockname()[1]
+    first = f"GET http://127.0.0.1:{port}/one HTTP/1.1\r\nHost: x\r\n\r\n".encode()
+    second = b"GET http://169.254.169.254/latest/meta-data/ HTTP/1.1\r\nHost: 169.254.169.254\r\n\r\n"
+    try:
+        with PinningProxy(allow_private=True) as px:
+            ph = urlsplit(px.url)
+            with socket.create_connection((ph.hostname, ph.port), timeout=5) as s:
+                s.settimeout(1.5)
+                if pipelined:
+                    s.sendall(first + second)
+                else:
+                    s.sendall(first)
+                    assert b"hello" in s.recv(65536)
+                    s.sendall(second)
+                try:
+                    while s.recv(65536):
+                        pass
+                except socket.timeout:
+                    pass
+        assert received == [f"GET /one HTTP/1.1".encode()]  # only the checked request reached the upstream
+        assert {a for a, _ in connect_spy} == {"127.0.0.1"}
+    finally:
+        up.close()
+
+
+def test_the_forwarded_request_asks_for_connection_close_and_keeps_its_body(connect_spy):
+    from yamlreel.pinproxy import PinningProxy
+    seen: list[bytes] = []
+    up = socket.socket()
+    up.bind(("127.0.0.1", 0))
+    up.listen(1)
+
+    def serve():
+        c, _ = up.accept()
+        data = b""
+        while b"ABCDE" not in data:
+            data += c.recv(65536)
+        seen.append(data)
+        c.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+        c.close()
+
+    threading.Thread(target=serve, daemon=True).start()
+    try:
+        with PinningProxy(allow_private=True) as px:
+            resp = _raw(px.url, (f"POST http://127.0.0.1:{up.getsockname()[1]}/p HTTP/1.1\r\nHost: x\r\n"
+                                 "Connection: keep-alive\r\nContent-Length: 5\r\n\r\nABCDE").encode())
+        assert resp.endswith(b"ok")
+        low = seen[0].lower()
+        assert b"connection: close" in low and b"proxy-connection: close" in low and b"keep-alive" not in low
+        assert seen[0].endswith(b"ABCDE")
+    finally:
+        up.close()
 
 
 def test_browser_redirect_to_a_mapped_metadata_address_is_a_capture_error(tmp_path):
