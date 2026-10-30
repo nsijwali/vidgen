@@ -505,3 +505,224 @@ def test_browser_redirect_to_a_mapped_metadata_address_is_a_capture_error(tmp_pa
                       tmp_path, tmp_path, [tmp_path], allow_private=True)
     finally:
         srv.shutdown()
+
+
+# ---------- response relaying: interim answers, trailing bytes, limits, stuck upstreams ----------
+
+def _via(response: bytes, method: str = "GET", close: bool = True) -> bytes:
+    from yamlreel.pinproxy import PinningProxy
+    up = _one_shot_upstream(response, close=close)
+    try:
+        with PinningProxy(allow_private=True) as px:
+            return _raw(px.url, f"{method} http://127.0.0.1:{up.getsockname()[1]}/ HTTP/1.1\r\nHost: x\r\n\r\n".encode())
+    finally:
+        up.close()
+
+
+FINAL = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: keep-alive\r\n\r\nhello"
+
+
+@pytest.mark.parametrize("interim", [
+    [b"HTTP/1.1 103 Early Hints\r\nLink: </a.css>; rel=preload\r\n\r\n"],
+    [b"HTTP/1.1 100 Continue\r\n\r\n"],
+    [b"HTTP/1.1 103 Early Hints\r\nLink: </a>\r\n\r\n", b"HTTP/1.1 103 Early Hints\r\nLink: </b>\r\n\r\n"],
+])
+@pytest.mark.parametrize("hold_open", [False, True])
+def test_interim_responses_are_passed_on_unchanged_before_the_final_one(interim, hold_open, connect_spy):
+    got = _via(b"".join(interim) + FINAL, close=not hold_open)
+    assert got.startswith(b"".join(interim))  # byte for byte: no Connection: close added to a 1xx
+    final = got[len(b"".join(interim)):]
+    low = final.split(b"\r\n\r\n")[0].lower()
+    assert final.startswith(b"HTTP/1.1 200 OK") and final.endswith(b"\r\n\r\nhello")
+    assert b"connection: close" in low and b"keep-alive" not in low
+
+
+def test_interim_head_arriving_in_pieces_is_still_followed_by_the_final_answer(connect_spy):
+    from yamlreel.pinproxy import PinningProxy
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+
+    def serve():
+        c, _ = srv.accept()
+        while b"\r\n\r\n" not in c.recv(65536):
+            pass
+        for piece in (b"HTTP/1.1 103 Early", b" Hints\r\n\r\nHTTP/1.1 200 O", b"K\r\nContent-Length: 2\r\n\r\no", b"k"):
+            c.sendall(piece)
+            time.sleep(0.05)
+        c.close()
+
+    threading.Thread(target=serve, daemon=True).start()
+    try:
+        with PinningProxy(allow_private=True) as px:
+            got = _raw(px.url, f"GET http://127.0.0.1:{srv.getsockname()[1]}/ HTTP/1.1\r\nHost: x\r\n\r\n".encode())
+        assert got.startswith(b"HTTP/1.1 103 Early Hints\r\n\r\nHTTP/1.1 200 OK") and got.endswith(b"\r\n\r\nok")
+    finally:
+        srv.close()
+
+
+def test_101_is_final_and_never_relayed_as_an_upgrade(connect_spy):
+    got = _via(b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\nraw websocket bytes")
+    head, _, body = got.partition(b"\r\n\r\n")
+    assert head.startswith(b"HTTP/1.1 101") and b"Connection: close" in head and b"Connection: Upgrade" not in head
+    assert body == b""
+
+
+def test_bytes_after_a_content_length_body_are_not_forwarded(connect_spy):
+    for hold_open in (False, True):
+        got = _via(FINAL + b"EXTRA-BYTES", close=not hold_open)
+        assert got.endswith(b"\r\n\r\nhello")
+
+
+@pytest.mark.parametrize("response,expected_end", [
+    (b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\nEXTRA-BYTES", b"0\r\n\r\n"),
+    (b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\nX-T: 1\r\n\r\nEXTRA", b"X-T: 1\r\n\r\n"),
+])
+def test_bytes_after_the_chunked_terminator_are_not_forwarded(response, expected_end, connect_spy):
+    for hold_open in (False, True):
+        assert _via(response, close=not hold_open).endswith(expected_end)
+
+
+def test_chunked_feed_reports_how_many_bytes_belong_to_the_body():
+    from yamlreel.pinproxy import _Chunked
+    c = _Chunked()
+    assert c.feed(b"3\r\nabc\r\n0\r\n\r\nTRAILING") == len(b"3\r\nabc\r\n0\r\n\r\n") and c.done
+    c = _Chunked()
+    assert c.feed(b"3\r\nab") == 5 and not c.done and c.feed(b"c\r\n0\r\n\r\n") == 8 and c.done
+
+
+@pytest.mark.parametrize("line", [b"0x2\r\n", b"1_0\r\n", b"-5\r\n", b"\r\n", b"g\r\n", b"+5\r\n", b"11111111111111111\r\n"])
+def test_chunk_sizes_must_be_plain_hex(line):
+    from yamlreel.pinproxy import _Chunked
+    with pytest.raises(ValueError):
+        _Chunked().feed(line)
+
+
+def test_chunk_size_lines_and_extensions_are_accepted_and_the_line_length_is_bounded(monkeypatch):
+    from yamlreel import pinproxy
+    from yamlreel.pinproxy import _Chunked
+    assert _Chunked().feed(b"A;name=value\r\n") == 14
+    monkeypatch.setattr(pinproxy, "MAX_HEAD", 64)
+    with pytest.raises(ValueError, match="too long"):
+        _Chunked().feed(b"5;" + b"x" * 100)  # no newline: bounded while it accumulates
+    c = _Chunked()
+    with pytest.raises(ValueError, match="too long"):
+        c.feed(b"5;" + b"x" * 40)
+        c.feed(b"y" * 40 + b"\r\n")  # a line that ends but is over the limit
+
+
+@pytest.mark.parametrize("response", [
+    b"HTTP/1.1 200 OK\nContent-Length: 2\n\nok",                    # head ended only by bare LFs
+    b"just some garbage with no head terminator",                    # not HTTP at all
+])
+def test_a_bad_upstream_head_is_answered_with_502(response, connect_spy):
+    assert _via(response).split(b"\r\n")[0].startswith(b"HTTP/1.1 502")
+
+
+@pytest.mark.parametrize("response", [
+    b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n-5\r\nabc",
+    b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0x2\r\nab\r\n",
+])
+def test_a_broken_chunked_body_truncates_the_answer_without_a_502(response, connect_spy):
+    got = _via(response)
+    assert got.startswith(b"HTTP/1.1 200 OK") and b"502" not in got
+
+
+def test_the_response_head_size_limit(monkeypatch, connect_spy):
+    from yamlreel import pinproxy
+    monkeypatch.setattr(pinproxy, "MAX_HEAD", 200)
+    filler = b"X-Filler: " + b"a" * 300 + b"\r\n"
+    assert _via(b"HTTP/1.1 200 OK\r\n" + filler).split(b"\r\n")[0].startswith(b"HTTP/1.1 502")            # no terminator
+    assert _via(b"HTTP/1.1 200 OK\r\n" + filler + b"\r\nok").split(b"\r\n")[0].startswith(b"HTTP/1.1 502")  # terminator late
+    assert _via(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok").endswith(b"ok")                              # small is fine
+    t0 = time.monotonic()  # an upstream that keeps the connection open must not be waited for
+    assert _via(b"HTTP/1.1 200 OK\r\n" + filler, close=False).split(b"\r\n")[0].startswith(b"HTTP/1.1 502")
+    assert time.monotonic() - t0 < 5
+
+
+def test_the_request_head_size_limit(monkeypatch, connect_spy):
+    from yamlreel import pinproxy
+    from yamlreel.pinproxy import PinningProxy
+    monkeypatch.setattr(pinproxy, "MAX_HEAD", 300)
+    with PinningProxy(allow_private=True) as px:
+        assert _raw(px.url, b"GET http://127.0.0.1:9/ HTTP/1.1\r\nX: " + b"a" * 1000 + b"\r\n\r\n") == b""
+        assert _raw(px.url, b"GET http://127.0.0.1:9/ HTTP/1.1\r\nX: " + b"a" * 1000) == b""  # never terminated, then EOF
+    assert [c for c in connect_spy if c[1] == 9] == []
+
+
+def _handler_threads() -> int:
+    return sum("process_request_thread" in t.name for t in threading.enumerate())
+
+
+def _dripping_upstream():
+    """Accepts requests and then sends one header byte every 50 ms for as long as the peer listens."""
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(50)
+
+    def serve():
+        while True:
+            try:
+                c, _ = srv.accept()
+            except OSError:
+                return
+
+            def drip(c=c):
+                try:
+                    c.recv(65536)
+                    c.sendall(b"HTTP/1.1 200 OK\r\n")
+                    while True:
+                        c.sendall(b"X")
+                        time.sleep(0.05)
+                except OSError:
+                    c.close()
+
+            threading.Thread(target=drip, daemon=True).start()
+
+    threading.Thread(target=serve, daemon=True).start()
+    return srv
+
+
+def _wait_for(cond, seconds=8.0) -> bool:
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        if cond():
+            return True
+        time.sleep(0.05)
+    return cond()
+
+
+def test_clients_that_leave_do_not_keep_handler_threads_alive(connect_spy):
+    from yamlreel.pinproxy import PinningProxy
+    up = _dripping_upstream()
+    port = up.getsockname()[1]
+    try:
+        with PinningProxy(allow_private=True) as px:
+            base = _handler_threads()
+            ph = urlsplit(px.url)
+            clients = []
+            for _ in range(15):
+                s = socket.create_connection((ph.hostname, ph.port), timeout=5)
+                s.sendall(f"GET http://127.0.0.1:{port}/ HTTP/1.1\r\nHost: x\r\n\r\n".encode())
+                clients.append(s)
+            assert _wait_for(lambda: _handler_threads() >= base + 15, 3)  # they are all stuck on the dripping upstream
+            for s in clients:
+                s.close()
+            assert _wait_for(lambda: _handler_threads() <= base), f"{_handler_threads() - base} handler threads left"
+    finally:
+        up.close()
+
+
+def test_a_response_has_an_overall_deadline(monkeypatch, connect_spy):
+    from yamlreel import pinproxy
+    from yamlreel.pinproxy import PinningProxy
+    monkeypatch.setattr(pinproxy, "RELAY_DEADLINE", 1.0)
+    up = _dripping_upstream()
+    try:
+        with PinningProxy(allow_private=True) as px:
+            t0 = time.monotonic()
+            got = _get(px.url, f"http://127.0.0.1:{up.getsockname()[1]}/")  # the client stays connected throughout
+            assert time.monotonic() - t0 < 6
+            assert got.split(b"\r\n")[0].startswith(b"HTTP/1.1 502")
+    finally:
+        up.close()
