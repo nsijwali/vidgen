@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 from PIL import Image
 
 from .pinproxy import PinningProxy
-from .safety import UnsafeInput, check_http_url, file_url_to_path, resolve_local
+from .safety import UnsafeInput, Unresolvable, check_http_url, file_url_to_path, resolve_local
 
 MAX_IMAGE_PIXELS = 64_000_000  # refuse decompression bombs
 MAX_CAPTURE_PIXELS = 36_000_000  # viewport width x height x scale^2 of one capture
@@ -90,10 +90,11 @@ def _clean(text: str, limit: int = 300) -> str:
     return "".join(c if c.isprintable() else " " for c in text)[:limit]
 
 
-def _refusal_error(url: str, refusals: list[tuple[str, str]]) -> CaptureError:
-    host, reason = refusals[0]  # the reason comes only from the proxy's own record, never from a response
+def _refusal_error(url: str, first: tuple[str, str], count: int) -> CaptureError:
+    host, reason = first  # the reason comes only from the proxy's own record, never from a response
+    more = f" (and {count - 1} more refused)" if count > 1 else ""
     return CaptureError(f"cannot capture {_clean(url)}: a request to {_clean(host, 100)} was refused by the "
-                        f"network policy: {_clean(reason)}")
+                        f"network policy: {_clean(reason)}{more}")
 
 
 def _request_allowed(url: str, roots: list[Path], allow_private: bool) -> bool:
@@ -117,7 +118,7 @@ def _capture(url: str, opts: dict, dest: Path, roots: list[Path], allow_private:
     scale = opts.get("scale", DEFAULT_SCALE)
     problem = capture_size_problem(vw, vh, scale)  # a spec is checked on load; this covers callers that skip that
     if problem:
-        raise CaptureError(f"cannot capture {url}: {problem}")
+        raise CaptureError(f"cannot capture {_clean(url)}: {problem}")
     try:
         from playwright.sync_api import Error as PwError
         from playwright.sync_api import sync_playwright
@@ -126,20 +127,35 @@ def _capture(url: str, opts: dict, dest: Path, roots: list[Path], allow_private:
 
     blocked: list[str] = []
 
+    proxy = PinningProxy(allow_private)
+
     def guard(route) -> None:  # every request the page makes, including redirects and sub-resources
-        if _request_allowed(route.request.url, roots, allow_private):
+        req_url = route.request.url
+        if urlparse(req_url).scheme in ("http", "https"):
+            try:
+                check_http_url(req_url, allow_private)
+            except Unresolvable:  # a dead name: the request fails, but that is not a policy decision
+                blocked.append(req_url)
+                route.abort()
+                return
+            except UnsafeInput as e:
+                # Aborted here, so it never reaches the proxy; record it where the proxy's own refusals are kept.
+                proxy.record_refusal(urlparse(req_url).hostname or "?", str(e))
+                blocked.append(req_url)
+                route.abort()
+                return
+            route.continue_()
+        elif _request_allowed(req_url, roots, allow_private):
             route.continue_()
         else:
-            blocked.append(route.request.url)
+            blocked.append(req_url)  # not http(s) (or a file outside the allowed folders): blocked, not a refusal
             route.abort()
-
-    proxy = PinningProxy(allow_private)
 
     def check_refused() -> None:
         """The proxy sees every http(s) request, CONNECT tunnels included, so its own record is the only evidence."""
-        refusals = proxy.refusals
-        if refusals:
-            raise _refusal_error(url, refusals)
+        first = proxy.first_refusal
+        if first:
+            raise _refusal_error(url, first, proxy.refusal_count)
 
     try:
         with sync_playwright() as p, proxy:
@@ -181,7 +197,14 @@ def _capture(url: str, opts: dict, dest: Path, roots: list[Path], allow_private:
                     raise
             finally:
                 browser.close()
+            try:
+                check_refused()  # anything refused while the browser shut down, before the image is kept
+            except CaptureError:
+                dest.unlink(missing_ok=True)
+                raise
     except PwError as e:
         check_refused()
-        extra = f" (blocked request to {blocked[0]})" if blocked else ""
-        raise CaptureError(f"could not capture {_clean(url)}{extra}: {e}") from e
+        extra = f" (blocked request to {_clean(blocked[0], 200)})" if blocked else ""
+        raise CaptureError(f"could not capture {_clean(url)}{extra}: {_clean(str(e))}") from e
+    finally:
+        proxy.close()

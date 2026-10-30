@@ -778,3 +778,56 @@ def test_the_refused_header_is_stripped_from_upstream_responses(connect_spy):
         srv.shutdown()
     assert b" 403 " in resp.split(b"\r\n")[0] + b" "
     assert b"x-yamlreel-refused" not in resp.lower()
+
+
+@pytest.mark.parametrize("request_bytes", [
+    b"CONNECT empty.test:443 HTTP/1.1\r\n\r\n",
+    b"GET http://empty.test/ HTTP/1.1\r\nHost: x\r\n\r\n",
+])
+def test_an_unresolvable_host_is_refused_with_403_but_not_recorded(request_bytes, connect_spy):
+    """A dead name is not a policy decision: the request fails, the capture does not."""
+    from yamlreel.pinproxy import PinningProxy
+    with PinningProxy(allow_private=False) as px:
+        resp = _raw(px.url, request_bytes)
+        assert px.refusals == [] and px.refusal_count == 0 and px.first_refusal is None
+    assert b" 403 " in resp.split(b"\r\n")[0] + b" "
+
+
+def test_the_unresolvable_error_is_still_an_unsafe_input():
+    from yamlreel.safety import Unresolvable
+    with pytest.raises(UnsafeInput) as e:
+        pinned_ips("empty.test", False)
+    assert isinstance(e.value, Unresolvable)
+
+
+def test_recorded_refusals_are_bounded_but_counted(connect_spy):
+    from yamlreel.pinproxy import MAX_RECORDED_REFUSALS, PinningProxy
+    with PinningProxy(allow_private=False) as px:
+        for i in range(MAX_RECORDED_REFUSALS + 5):
+            px.record_refusal(f"h{i}.test", f"reason {i}")
+        assert len(px.refusals) == MAX_RECORDED_REFUSALS
+        assert px.refusal_count == MAX_RECORDED_REFUSALS + 5
+        assert px.first_refusal == ("h0.test", "reason 0")
+
+
+def test_the_refused_header_is_stripped_from_interim_responses_too(connect_spy):
+    from yamlreel.pinproxy import PinningProxy
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+
+    def serve():
+        c, _ = srv.accept()
+        c.recv(65536)
+        c.sendall(b"HTTP/1.1 103 Early Hints\r\nX-Yamlreel-Refused: 1\r\nLink: </a.css>\r\n\r\n"
+                  b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+        c.close()
+
+    threading.Thread(target=serve, daemon=True).start()
+    try:
+        with PinningProxy(allow_private=True) as px:
+            resp = _get(px.url, f"http://127.0.0.1:{srv.getsockname()[1]}/")
+    finally:
+        srv.close()
+    assert b" 103 " in resp and b"Link: </a.css>" in resp and resp.endswith(b"ok")
+    assert b"x-yamlreel-refused" not in resp.lower()

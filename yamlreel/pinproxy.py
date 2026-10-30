@@ -17,11 +17,15 @@ import threading
 import time
 from urllib.parse import urlsplit
 
-from .safety import UnsafeInput, pinned_ips
+from .safety import UnsafeInput, Unresolvable, pinned_ips
 
 MAX_HEAD = 64 * 1024
 IDLE_SECONDS = 30
+MAX_RECORDED_REFUSALS = 16  # the first few are kept, the rest only counted
 RELAY_DEADLINE = 120.0  # seconds one response (head and body) may take in total
+
+
+REFUSED_HEADER = "x-yamlreel-refused"  # on this proxy's own 403s, for humans and tools; the capture never trusts it
 
 
 def _connect(host: str, port: int, allow_private: bool) -> socket.socket:
@@ -135,7 +139,9 @@ def _relay_response(upstream: socket.socket, client: socket.socket, method: str)
             except (IndexError, ValueError):
                 status = 0
             if 100 <= status < 200 and status != 101:
-                send(buf[:end + 4])  # interim answer (100, 103, ...): unchanged, the final head follows
+                # interim answer (100, 103, ...): passed on (minus the refusal marker), the final head follows
+                send("\r\n".join(h for h in lines if h.split(":", 1)[0].strip().lower() != REFUSED_HEADER)
+                     .encode("latin-1") + b"\r\n\r\n")
                 buf = body
                 continue
             break
@@ -144,7 +150,7 @@ def _relay_response(upstream: socket.socket, client: socket.socket, method: str)
             hdrs.setdefault(h.split(":", 1)[0].strip().lower(), h.split(":", 1)[-1].strip())
         kept = [h for h in lines[1:]
                 if h.split(":", 1)[0].strip().lower() not in ("connection", "keep-alive", "proxy-connection",
-                                                         "x-yamlreel-refused")]  # only this proxy may say "refused"
+                                                         REFUSED_HEADER)]  # plain-HTTP responses only; nothing trusts this header
         send("\r\n".join([lines[0], *kept, "Connection: close", "Proxy-Connection: close"]).encode("latin-1")
              + b"\r\n\r\n")
         if method == "HEAD" or status in (101, 204, 304):  # 101 is never relayed as an upgrade: final, then close
@@ -265,7 +271,8 @@ class _Handler(socketserver.BaseRequestHandler):
             finally:
                 upstream.close()
         except UnsafeInput as e:
-            self.server.record_refusal(target_host, str(e))  # type: ignore[attr-defined]
+            if not isinstance(e, Unresolvable):  # a dead name is refused too, but it is not a policy decision
+                self.server.record_refusal(target_host, str(e))  # type: ignore[attr-defined]
             msg = str(e).encode()
             client.sendall(b"HTTP/1.1 403 Forbidden\r\nConnection: close\r\nX-Yamlreel-Refused: 1\r\n"
                            b"Content-Length: %d\r\n\r\n" % len(msg) + msg)
@@ -287,7 +294,9 @@ class _Server(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
     def record_refusal(self, host: str, reason: str) -> None:
         with self.refusals_lock:
-            self.refusals.append((host, reason))
+            self.refusal_count += 1
+            if len(self.refusals) < MAX_RECORDED_REFUSALS:
+                self.refusals.append((host, reason))
 
 
 class PinningProxy:
@@ -297,8 +306,25 @@ class PinningProxy:
         self._server = _Server(("127.0.0.1", 0), _Handler)
         self._server.allow_private = allow_private  # type: ignore[attr-defined]
         self._server.refusals = []  # type: ignore[attr-defined]
+        self._server.refusal_count = 0  # type: ignore[attr-defined]
+        self._started = False
+        self._closed = False
         self._server.refusals_lock = threading.Lock()  # type: ignore[attr-defined]
         self.url = f"http://127.0.0.1:{self._server.server_address[1]}"
+
+    def record_refusal(self, host: str, reason: str) -> None:
+        """For the capture's own route guard: a request it refused before it could reach this proxy."""
+        self._server.record_refusal(host, reason)  # type: ignore[attr-defined]
+
+    @property
+    def first_refusal(self) -> tuple[str, str] | None:
+        with self._server.refusals_lock:  # type: ignore[attr-defined]
+            return self._server.refusals[0] if self._server.refusals else None  # type: ignore[attr-defined]
+
+    @property
+    def refusal_count(self) -> int:
+        with self._server.refusals_lock:  # type: ignore[attr-defined]
+            return self._server.refusal_count  # type: ignore[attr-defined]
 
     @property
     def refusals(self) -> list[tuple[str, str]]:
@@ -308,8 +334,17 @@ class PinningProxy:
 
     def __enter__(self) -> "PinningProxy":
         threading.Thread(target=self._server.serve_forever, daemon=True).start()
+        self._started = True
         return self
 
-    def __exit__(self, *exc) -> None:
-        self._server.shutdown()
+    def close(self) -> None:
+        """Idempotent: safe to call whether or not the proxy was ever started."""
+        if self._closed:
+            return
+        self._closed = True
+        if self._started:
+            self._server.shutdown()
         self._server.server_close()
+
+    def __exit__(self, *exc) -> None:
+        self.close()

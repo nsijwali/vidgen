@@ -18,6 +18,10 @@ class UnsafeInput(ValueError):
     pass
 
 
+class Unresolvable(UnsafeInput):
+    """A host name that did not resolve: still refused, but not a policy decision (a dead name is just a dead name)."""
+
+
 def resolve_local(path: str | Path, base: Path, roots: list[Path]) -> Path:
     """Resolve `path` (relative to `base`) and require it to sit inside one of `roots`.
 
@@ -203,7 +207,7 @@ def pinned_ips(host: str, allow_private: bool) -> list[str]:
         )
     ips = _ips_for(name)
     if not ips:
-        raise UnsafeInput(f"cannot resolve host: {host}")
+        raise Unresolvable(f"cannot resolve host: {host}")
     out: list[str] = []
     for ip in ips:
         verdict = classify(ip)

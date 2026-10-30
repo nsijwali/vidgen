@@ -74,9 +74,16 @@ evaluated in this order:
   A request with a malformed or conflicting `Content-Length`, or a bare LF/CR in its head, gets 400.
   Known and accepted: `Expect: 100-continue` is not special-cased, port 0 fails at connect, and IDNA 2003 (Python's
   codec) is used instead of UTS 46.
-- **Follow-up PR (shots.py, after PR B):** raise `CaptureError` when the proxy refusal header is seen (so a refused
-  redirect hop or sub-resource fails the capture instead of rendering a partial page), and launch Chromium with
-  `--force-webrtc-ip-handling-policy=disable_non_proxied_udp` so WebRTC cannot bypass the proxy.
+- **Follow-up PR (shots.py, after PR B):** the capture fails with `CaptureError` when the network policy refused any
+  request (so a refused redirect hop or sub-resource fails the capture instead of rendering a partial page). The
+  evidence is the proxy's own refusal record, not a response header or body (an HTTPS CONNECT refusal never reaches the
+  page, and a site can forge a header): `PinningProxy` keeps the first 16 `(host, reason)` entries plus a count, and the
+  capture's route guard adds direct sub-resources it aborts before they reach the proxy. A host that does not resolve
+  (`Unresolvable`) is still refused with 403 but is not a policy decision and is not recorded. The check runs after
+  navigation errors, before the fallback navigation, after the settle wait, after the screenshot and after the browser
+  closes (the image is deleted on failure). `X-Yamlreel-Refused` stays on the proxy's 403s for humans and is stripped from
+  relayed upstream responses; nothing trusts it. Chromium launches with `--force-webrtc-ip-handling-policy=` and
+  `--webrtc-ip-handling-policy=disable_non_proxied_udp` so WebRTC cannot bypass the proxy.
 - Rejected: `is_global` only (version-dependent, and loses the "metadata even with the flag" rule). Blocking 100.64/10
   even with the flag (breaks legitimate Tailscale dev servers). Resolve-and-allow numeric forms (platform-dependent parsing).
 - **Messages.** Keep `cloud metadata host refused: {host}`, `cannot resolve host: {host}` and the existing private
