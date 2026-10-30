@@ -14,7 +14,9 @@ from typing import Any, Callable, Iterable
 import yaml
 
 from . import shots
-from .config import DEFAULTS, HARD_LIMITS, SHARED_KEYS, Config, _absolutize, clamp_limits, describe_key, merge
+from .config import (DEFAULTS, HARD_LIMITS, SHARED_KEYS, Config, _absolutize, clamp_limits, describe_key,
+                     describe_value, merge, normalize_music)
+from .config import yaml_problem as _yaml_problem
 from .music import NOTE_OFFSETS, SCALES
 from .scenes import SCENE_TYPES, DiagramScene, Scene
 from .theme import get_theme
@@ -51,6 +53,7 @@ MAX_ID_CHARS = 100       # a node id
 MAX_CUE_SECONDS = 600    # latest `at` of a node, edge or flash
 MAX_META_ENTRIES = 50    # tags, links or credits
 MAX_THEMES = 100         # custom themes in one spec or config
+MAX_THEME_NAME = 60
 MAX_FORMATS = 3
 NODE_SIZE = (16, 120)
 # Output frames over all formats: one hour at 60 fps, or two formats at 30 fps.
@@ -66,13 +69,16 @@ def suggest(key: str, allowed: Iterable[str]) -> str | None:
     return None
 
 
-def _unknown_key(path: str, key: object, allowed: Iterable[str], what: str) -> SpecError:
+def _unknown_key(path: str, key: object, allowed: Iterable[str], what: str, exc: type[Exception] = SpecError,
+                 problem: str = "unknown field", note: str = "") -> Exception:
     """The error for a key that `what` does not have. `path` is the mapping that holds the key."""
     name = describe_key(key)
     full = f"{path}.{name}" if path else name
-    msg = f"{full}: unknown field for {what}; allowed: {', '.join(sorted(allowed))}"
+    msg = f"{full}: {problem} for {what}; allowed: {', '.join(sorted(allowed))}"
+    if note:
+        msg += f" ({note})"
     hint = suggest(key, allowed) if isinstance(key, str) else None
-    return SpecError(f"{msg} ({hint})" if hint else msg)
+    return exc(f"{msg} ({hint})" if hint else msg)
 
 
 def _no_unknown(path: str, raw: dict[Any, Any], allowed: Iterable[str], what: str) -> None:
@@ -80,14 +86,6 @@ def _no_unknown(path: str, raw: dict[Any, Any], allowed: Iterable[str], what: st
     for key in raw:  # file order: the first mistake the author made is the one reported
         if key not in allowed:
             raise _unknown_key(path, key, allowed, what)
-
-
-def _yaml_problem(e: yaml.YAMLError) -> str:
-    if isinstance(e, yaml.MarkedYAMLError):
-        mark = e.problem_mark or e.context_mark
-        where = f" at line {mark.line + 1}, column {mark.column + 1}" if mark else ""
-        return " ".join(f"{e.problem or 'invalid YAML'}{where}".split())
-    return " ".join(str(e).split())
 
 
 def load_spec(path: str | Path, config: Config | None = None) -> dict[str, Any]:
@@ -133,10 +131,11 @@ def _is_number(v: Any) -> bool:
 
 
 def _number(path: str, v: Any, lo: float, hi: float, integer: bool = False) -> Any:
-    ok = _is_number(v) and (not integer or isinstance(v, int)) and lo <= v <= hi
+    whole = isinstance(v, int) or (isinstance(v, float) and v.is_integer())  # 30.0 is 30
+    ok = _is_number(v) and (not integer or whole) and lo <= v <= hi
     if not ok:
         raise SpecError(f"{path} must be {'an integer' if integer else 'a number'} between {_fmt(lo)} and {_fmt(hi)}")
-    return v if integer else float(v)
+    return int(v) if integer else float(v)
 
 
 def _text(path: str, v: Any, limit: int = MAX_TEXT, limit_name: str = "MAX_TEXT") -> str:
@@ -203,12 +202,17 @@ Checker = Callable[[str, Any, dict[str, Any], _Env], Any]
 
 def _scene_type(path: str, v: Any, sc: dict[str, Any], env: _Env) -> str:
     if not isinstance(v, str) or v not in SCENE_TYPES:
-        raise SpecError(f"{path}: unknown type {v!r}; choose from {', '.join(SCENE_TYPES)}")
+        raise SpecError(f"{path}: unknown type {describe_value(v)}; choose from {', '.join(SCENE_TYPES)}")
     return v
 
 
 def _seconds(path: str, v: Any, sc: dict[str, Any], env: _Env) -> float:
-    return _number(path, v, 0.1, env.max_seconds)
+    try:
+        return _number(path, v, 0.1, env.max_seconds)
+    except SpecError as e:
+        if "max_seconds" in env.capped:
+            raise SpecError(f"{e} ({env.note('max_seconds')})") from e
+        raise
 
 
 def _narration(path: str, v: Any, sc: dict[str, Any], env: _Env) -> Any:
@@ -445,19 +449,26 @@ def _limits(path: str, v: Any, spec: dict[str, Any], env: _Env) -> dict[str, Any
     return limits
 
 
+def _theme_name(what: str, name: Any) -> str:
+    if not isinstance(name, str) or not name.strip() or not name.isprintable() or len(name) > MAX_THEME_NAME:
+        raise SpecError(f"{what} must be printable text of 1 to {MAX_THEME_NAME} characters, got {describe_value(name)}")
+    return name
+
+
 def _themes(path: str, v: Any, spec: dict[str, Any], env: _Env) -> dict[str, Any]:
+    if v is None:  # like voiceover and watermark: nothing set
+        return {}
     themes = _mapping(path, v)
     if len(themes) > MAX_THEMES:
         raise SpecError(f"{path} has {len(themes)} entries; the limit is {MAX_THEMES} (MAX_THEMES)")
     for name, d in themes.items():
-        if not isinstance(name, str):
-            raise SpecError(f"{path}: theme names must be text, got {describe_key(name)}")
+        _theme_name(f"{path}: theme name", name)
         if isinstance(d, dict):
             for key in d:
                 if not isinstance(key, str):
                     raise SpecError(f"{path}.{name}: keys must be text, got {describe_key(key)}")
-            if "extends" in d and not isinstance(d["extends"], str):
-                raise SpecError(f"{path}.{name}.extends must be the name of a theme")
+            if "extends" in d:
+                _theme_name(f"{path}.{name}.extends", d["extends"])
         try:
             get_theme(name, themes)  # validates the entry (and everything it extends)
         except ValueError as e:
@@ -466,8 +477,7 @@ def _themes(path: str, v: Any, spec: dict[str, Any], env: _Env) -> dict[str, Any
 
 
 def _theme(path: str, v: Any, spec: dict[str, Any], env: _Env) -> str:
-    if not isinstance(v, str) or not v.strip():
-        raise SpecError("theme must be the name of a theme")
+    _theme_name("theme", v)
     try:
         spec["_theme_obj"] = get_theme(v, spec.get("themes") or {})
     except ValueError as e:
@@ -498,8 +508,8 @@ MUSIC_KEYS = ("style", "bpm", "root", "scale", "seed", "volume", "snap")
 
 
 def _music(path: str, v: Any, spec: dict[str, Any], env: _Env) -> dict[str, Any]:
-    if isinstance(v, str):  # shorthand for {style: ...} over the defaults
-        v = {**DEFAULTS["music"], "style": v}
+    if isinstance(v, str):  # a caller that skipped validate(): the shorthand was normalised per layer otherwise
+        v = {"style": v}
     music = dict(_mapping(path, v)) if isinstance(v, dict) else None
     if music is None:
         raise SpecError(f"{path} must be a mapping or a string")
@@ -628,6 +638,7 @@ def validate(raw: Any, config: Config | None = None, base_dir: Path | None = Non
         raise SpecError(f"{', '.join(sorted(forbidden))}: not settable from a spec (user config or CLI only)")
     _no_unknown("", raw, SHARED_KEYS | {"scenes"}, "a spec")
     raw = dict(raw)
+    normalize_music(raw)
     if base_dir is not None:
         _absolutize(raw, base_dir)  # paths in a spec are relative to the spec
     spec: dict[str, Any] = merge(cfg.data, raw)

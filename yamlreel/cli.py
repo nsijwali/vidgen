@@ -85,7 +85,8 @@ def cmd_render(args: argparse.Namespace) -> int:
     results = {}
     for fmt in formats:
         print(f"rendering {fmt} ...", flush=True)
-        results[fmt] = render(spec, fmt, out_dir, fps=fps, scale=scale, music_override=args.music, contact=True, runtime=rt)
+        results[fmt] = render(spec, fmt, out_dir, fps=fps, scale=scale, music_override=args.music, contact=True, runtime=rt,
+                               n_formats=len(formats))
     total = next(iter(results.values()))["seconds"]
     text, warns = share_copy(spec, total, formats)
     (out_dir / "share-copy.txt").write_text(text, encoding="utf-8")

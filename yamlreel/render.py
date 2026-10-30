@@ -259,7 +259,8 @@ def ffmpeg_exe() -> str | None:
 
 def render(spec: dict[str, Any], fmt: str, out_dir: Path, fps: int = 30, scale: float = 1.0,
            music_override: str | None = None, contact: bool = True,
-           runtime: Runtime | None = None) -> dict[str, Any]:
+           runtime: Runtime | None = None, n_formats: int = 1) -> dict[str, Any]:
+    """Render one format. `n_formats` is how many formats this run renders in all, for the frame budget."""
     ffmpeg = ffmpeg_exe()
     if ffmpeg is None:
         raise RenderError("ffmpeg not found. Install it (macOS: brew install ffmpeg; Debian/Ubuntu: sudo apt install "
@@ -287,7 +288,7 @@ def render(spec: dict[str, Any], fmt: str, out_dir: Path, fps: int = 30, scale: 
             raise RenderError(f"after narration and beat snapping the video is {total_seconds:.1f}s; "
                               f"the limit is {limit:g}s (limits.max_seconds)")
         try:
-            check_frame_budget(total_seconds, fps, 1)
+            check_frame_budget(total_seconds, fps, n_formats)
         except SpecError as e:
             raise RenderError(str(e)) from e
         tl = Timeline(spec, fmt, cache, scale, rt)
