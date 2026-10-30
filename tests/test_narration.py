@@ -216,6 +216,21 @@ def _decode_mono_8k(video):
     return np.frombuffer(out, dtype="<i2").astype(np.float32) / 32768.0
 
 
+def _assert_speech_is_steady(audio, starts, clip_s, rate=8000):
+    """Every 50 ms window inside each clip is at least 0.8x as loud as the clip's mid-speech level."""
+    lead = voice_mod.NARRATION_LEAD
+    for start in starts:
+        t0 = start + lead
+        mid = audio[int((t0 + clip_s / 2 - 0.05) * rate):int((t0 + clip_s / 2 + 0.05) * rate)]
+        ref = float(np.sqrt(np.mean(mid ** 2)))
+        assert ref > 0.05
+        end = t0 + clip_s - 0.005
+        # 50 ms windows from the start of the speech, plus one that ends right at its last sample
+        for t in [t0 + 0.02 + 0.05 * k for k in range(int((clip_s - 0.03) / 0.05))] + [end - 0.05]:
+            win = audio[int(t * rate):int((t + 0.05) * rate)]
+            assert float(np.sqrt(np.mean(win ** 2))) >= 0.8 * ref, f"speech is quieter at {t:.2f}s"
+
+
 def test_narration_without_music_is_audible_to_the_end(tmp_path):
     srv, calls, url = _fake_voice_server(seconds=1.0)
     try:
@@ -225,16 +240,27 @@ def test_narration_without_music_is_audible_to_the_end(tmp_path):
     finally:
         srv.shutdown()
     assert len(calls) == 2
-    audio = _decode_mono_8k(res["video"])
-    rate = 8000
-    # scenes are 1.5 s each (1.0 s of speech + 0.5 s gap); speech runs from start + lead for 1.0 s
-    for start in (0.0, 1.5):
-        a, b = start + voice_mod.NARRATION_LEAD + 0.1, start + voice_mod.NARRATION_LEAD + 0.9
-        t = a
-        while t + 0.1 <= b + 1e-9:
-            win = audio[int(t * rate):int((t + 0.1) * rate)]
-            assert float(np.sqrt(np.mean(win ** 2))) > 0.05, f"silent at {t:.1f}s"
-            t += 0.1
+    # scenes are 1.5 s each (1.0 s of speech + 0.5 s gap)
+    _assert_speech_is_steady(_decode_mono_8k(res["video"]), (0.0, 1.5), 1.0)
+
+
+def test_the_end_fade_never_cuts_speech_when_the_last_scene_is_at_its_floor(tmp_path):
+    srv, _, url = _fake_voice_server(seconds=1.0)
+    try:
+        spec = _spec(1.0, 1.0, snap=False, narrate=True, voiceover={"gap": 0})
+        res = render(spec, "square", tmp_path / "o", fps=5, scale=0.1, contact=False,
+                     runtime=Runtime(roots=[tmp_path], voice=VoiceServer(url=url)))
+    finally:
+        srv.shutdown()
+    assert res["seconds"] == pytest.approx(2.6)  # 1.3 s per scene: lead + 1.0 s of speech, no gap
+    _assert_speech_is_steady(_decode_mono_8k(res["video"]), (0.0, 1.3), 1.0)
+
+
+def test_a_bad_port_after_reassigning_the_url_is_a_voice_error():
+    s = VoiceServer(url="http://h/mcp/")
+    s.url = "http://h:notaport/mcp/"
+    with pytest.raises(VoiceError):
+        s.identity()
 
 
 def test_identity_keeps_path_params_and_follows_a_reassigned_url():

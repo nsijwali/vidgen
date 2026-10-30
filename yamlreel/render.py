@@ -338,7 +338,9 @@ def render(spec: dict[str, Any], fmt: str, out_dir: Path, fps: int = 30, scale: 
                 cmd += ["-af", music_f.format(vol=vol)]
             else:
                 # Narration only: never fade the speech; just a tiny fade after it to avoid a click at the end.
-                end_fade = max(0.0, total - 0.05)
+                speech_end = max((tl.starts[i] + voice_mod.NARRATION_LEAD + len(c) / voice_mod.SAMPLE_RATE
+                                  for i, c in clips.items()), default=0.0)
+                end_fade = max(speech_end, total - 0.05)  # the fade starts after the last word, never inside it
                 cmd += ["-af", f"atrim=0:{total:.3f},asetpts=PTS-STARTPTS,afade=t=out:st={end_fade:.3f}:d=0.05"]
             cmd += ["-c:a", "aac", "-b:a", "192k", "-ac", "2"]
         cmd += ["-movflags", "+faststart", "-t", f"{total:.3f}", str(out / "video.mp4")]

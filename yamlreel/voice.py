@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.error import URLError
-from urllib.parse import urlparse, urlsplit
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 import numpy as np
@@ -57,7 +57,11 @@ class VoiceServer:
         host = u.hostname or ""
         if ":" in host:
             host = f"[{host}]"
-        port = u.port if u.port is not None else (443 if u.scheme == "https" else 80)
+        try:
+            explicit = u.port
+        except ValueError as e:  # url reassigned to a bad value after construction
+            raise VoiceError(f"voice_server.url is not a valid URL ({e}): {self.url!r}") from e
+        port = explicit if explicit is not None else (443 if u.scheme == "https" else 80)
         return f"{u.scheme}://{host}:{port}{u.path or '/'}"
 
 
