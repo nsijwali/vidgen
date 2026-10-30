@@ -51,6 +51,7 @@ def file_url_to_path(url: str) -> str:
 
 METADATA_NAMES = frozenset({
     "metadata", "metadata.google.internal", "metadata.goog", "instance-data", "instance-data.ec2.internal",
+    "metadata.tencentyun.com",
 })
 
 
@@ -62,7 +63,9 @@ ALWAYS_DENY = _nets(
     "0.0.0.0/8", "::/128",                                      # "this host"
     "169.254.0.0/16", "fe80::/10",                              # link-local: cloud metadata, ECS credentials
     "fd00:ec2::/32",                                            # AWS IPv6 metadata (inside ULA: before PRIVATE_OPT_IN)
+    "fd20:ce::254/128", "fd00:c1::a9fe:a9fe/128",               # GCP and OCI IPv6 metadata (inside ULA)
     "100.100.100.200/32",                                       # Alibaba Cloud metadata (inside CGNAT)
+    "168.63.129.16/32",                                         # Azure WireServer / host agent
     "192.0.0.0/24",                                             # IETF assignments, incl. Oracle metadata 192.0.0.192
     "224.0.0.0/4", "ff00::/8", "240.0.0.0/4",                   # multicast, reserved, broadcast
     "::/96", "fec0::/10", "64:ff9b:1::/48",                     # deprecated or local-NAT64 forms
@@ -74,6 +77,7 @@ NOT_GLOBAL_EXTRA = _nets(
     "192.0.2.0/24", "198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24",
     "2001:db8::/32", "3fff::/20", "100::/64", "2001::/23", "5f00::/16",
 )
+_GLOBAL_UNICAST_V6 = ipaddress.ip_network("2000::/3")
 _NAT64 = ipaddress.ip_network("64:ff9b::/96")
 _LOOPBACK6 = ipaddress.IPv6Address("::1")
 _NUMERIC_LABEL = re.compile(r"[0-9]+|0x[0-9a-f]*")
@@ -125,7 +129,8 @@ def classify(ip: ipaddress._BaseAddress) -> Verdict:
         return Verdict("deny", connect, note, always=True)
     if _in(target, PRIVATE_OPT_IN):
         return Verdict("private", connect, note)
-    if target.is_global and not _in(target, NOT_GLOBAL_EXTRA):
+    if (target.is_global and not _in(target, NOT_GLOBAL_EXTRA)
+            and (target.version == 4 or target in _GLOBAL_UNICAST_V6)):
         return Verdict("allow", connect, note)
     return Verdict("deny", connect, note)
 
@@ -153,6 +158,25 @@ def _ips_for(host: str) -> list[ipaddress._BaseAddress]:
     return out
 
 
+def _normalise_host(host: str) -> str:
+    """The name that is judged and resolved: no brackets or scope id, IDNA/ASCII, lower case, no trailing dots.
+
+    Fullwidth digits and ideographic full stops therefore get the verdict of their ASCII equivalents. A host with a
+    colon must be an IPv6 literal (it never reaches DNS)."""
+    name = host.strip("[]")
+    if ":" in name:
+        addr = name.partition("%")[0]  # the scope id (interface name) is not part of the address
+        try:
+            return str(ipaddress.IPv6Address(addr))
+        except ValueError:
+            raise UnsafeInput(f"URL host {host!r} is not a valid IPv6 address") from None
+    try:
+        name = name.encode("idna").decode("ascii")
+    except UnicodeError:
+        raise UnsafeInput(f"URL host {host!r} is not a valid host name") from None
+    return name.lower().rstrip(".")
+
+
 def _is_nonstandard_numeric(name: str) -> bool:
     """WHATWG "ends in a number": such a host must be a strict dotted quad, never a form inet_aton would reinterpret."""
     if ":" in name or not _NUMERIC_LABEL.fullmatch(name.rsplit(".", 1)[-1]):
@@ -170,7 +194,7 @@ def pinned_ips(host: str, allow_private: bool) -> list[str]:
     """Resolve `host` once, validate every address, and return the addresses that may be connected to.
 
     Callers must connect to a returned address, not re-resolve the name (that is the DNS-rebinding gap)."""
-    name = host.strip("[]").lower().rstrip(".")
+    name = _normalise_host(host)
     if name in METADATA_NAMES:
         raise UnsafeInput(f"cloud metadata host refused: {host}")
     if _is_nonstandard_numeric(name):
@@ -203,9 +227,13 @@ def pinned_ips(host: str, allow_private: bool) -> list[str]:
 def check_http_url(url: str, allow_private: bool) -> None:
     """Allow http(s) URLs. Link-local and cloud-metadata addresses are always refused; loopback and
     private ranges only with allow_private (a local dev server is a normal thing to capture)."""
-    u = urlparse(url)
+    try:
+        u = urlparse(url)
+        hostname = u.hostname
+    except ValueError as e:
+        raise UnsafeInput(f"not a valid URL ({e}): {url}") from None
     if u.scheme not in ("http", "https"):
         raise UnsafeInput(f"only http(s) URLs can be captured: {url}")
-    if not u.hostname:
+    if not hostname:
         raise UnsafeInput(f"URL has no host: {url}")
-    pinned_ips(u.hostname, allow_private)
+    pinned_ips(hostname, allow_private)
