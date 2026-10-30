@@ -27,8 +27,12 @@ Four independent PRs (A, B, C, D), merged in that order, then a release PR. Vers
 calls `pinned_ips`. Both end in one function, so the fix goes in one place. `voice.py` server URLs are trusted and out of scope.
 **Decision.** Replace the predicate chain with `classify(ip) -> Verdict` ("allow" | "private" | "deny", plus a reason),
 evaluated in this order:
-1. Host name (lower-cased, trailing dots stripped) in `METADATA_NAMES = {metadata, metadata.google.internal,
-   metadata.goog, instance-data, instance-data.ec2.internal}` → deny. This is defence in depth: the IP rule already
+0. Normalise the host: strip brackets; a host with `:` must be an IPv6 literal (anything else is refused without a DNS
+   query) and its scope id (`%lo0`) is dropped; otherwise `.encode("idna")` (UnicodeError → refused), lower-case,
+   strip trailing dots. Fullwidth digits and ideographic full stops are therefore judged like their ASCII forms, and the
+   normalised name is what is resolved. `check_http_url` turns any `urlparse` `ValueError` into `UnsafeInput`.
+1. Host name in `METADATA_NAMES = {metadata, metadata.google.internal, metadata.goog, instance-data,
+   instance-data.ec2.internal, metadata.tencentyun.com}` → deny. This is defence in depth: the IP rule already
    covers them.
 2. Numeric-host forms: if the last dot-label is all digits or `0x...` (the WHATWG "ends in a number" rule), the host
    must parse as a strict `IPv4Address`. Otherwise deny, so `2130706433`, `0x7f.1`, `0177.0.0.1` and `127.1` are refused
@@ -42,12 +46,15 @@ evaluated in this order:
    | 0.0.0.0/8, ::/128 | "this host": 0.0.0.0 reaches local listeners on Linux/macOS |
    | 169.254.0.0/16, fe80::/10 | link-local: AWS/GCP/Azure/OCI/DO metadata 169.254.169.254, ECS creds 169.254.170.2 |
    | fd00:ec2::/32 | AWS IPv6 IMDS (fd00:ec2::254), DNS, NTP: inside ULA, so carve it out before the private tier |
+   | fd20:ce::254/128, fd00:c1::a9fe:a9fe/128 | GCP and OCI IPv6 metadata, inside ULA (addresses from memory of the vendors' docs, not re-verified offline; an extra deny is harmless) |
    | 100.100.100.200/32 | Alibaba Cloud metadata, inside CGNAT. The rest of 100.64/10 (Tailscale) stays opt-in |
+   | 168.63.129.16/32 | Azure WireServer / host agent |
    | 192.0.0.0/24 | IETF protocol assignments, incl. Oracle Cloud metadata 192.0.0.192. Nothing legitimate to capture |
    | 224.0.0.0/4, ff00::/8, 240.0.0.0/4 (incl. 255.255.255.255) | multicast, reserved, broadcast |
    | ::/96 (IPv4-compatible, after the ::1 check), fec0::/10, 64:ff9b:1::/48 | deprecated or local-NAT64 forms with no fixed embedding |
 5. `PRIVATE_OPT_IN` (allowed only with the flag): 127.0.0.0/8, ::1, 10/8, 172.16/12, 192.168/16, 100.64.0.0/10, fc00::/7.
-6. Otherwise allow if `ip.is_global` and not in `NOT_GLOBAL_EXTRA` (192.0.2/24, 198.18/15, 198.51.100/24,
+6. Otherwise allow if `ip.is_global`, an IPv6 target is inside `2000::/3` (global unicast; everything else, e.g.
+   `4000::1` or `::ffff:0:a9fe:a9fe`, is denied), and not in `NOT_GLOBAL_EXTRA` (192.0.2/24, 198.18/15, 198.51.100/24,
    203.0.113/24, 2001:db8::/32, 3fff::/20, 100::/64, 2001::/23, 5f00::/16). This keeps the result the same on every
    supported Python. Anything else → deny ("not a public internet address").
 - **DNS.** `_ips_for(host)` keeps its name and signature (an existing test patches it). Resolution moves into a new seam
@@ -56,7 +63,14 @@ evaluated in this order:
   addresses, and the proxy connects only to those (unchanged).
 - **Redirects.** Do not rely on the Playwright `route` guard for redirect hops (Playwright documents that route handlers
   may see only the first URL of a redirect chain). The pinning proxy is the enforcement point. Every hop is a new proxy
-  request or `CONNECT`, which re-runs `pinned_ips`. The route guard stays as a second layer.
+  request or `CONNECT`, which re-runs `pinned_ips`. The route guard stays as a second layer. The proxy forwards exactly one request per
+  client connection (`Connection: close` and `Proxy-Connection: close` upstream, the body limited to `Content-Length`,
+  the response relayed back one-way), so a reused or pipelined connection can never carry an unchecked second request;
+  `CONNECT` tunnels are spliced after the check. A `CONNECT` port must be ASCII digits in 1..65535 (else 400). Every
+  403 refusal carries `X-Yamlreel-Refused: 1`.
+- **Follow-up PR (shots.py, after PR B):** raise `CaptureError` when the proxy refusal header is seen (so a refused
+  redirect hop or sub-resource fails the capture instead of rendering a partial page), and launch Chromium with
+  `--force-webrtc-ip-handling-policy=disable_non_proxied_udp` so WebRTC cannot bypass the proxy.
 - Rejected: `is_global` only (version-dependent, and loses the "metadata even with the flag" rule). Blocking 100.64/10
   even with the flag (breaks legitimate Tailscale dev servers). Resolve-and-allow numeric forms (platform-dependent parsing).
 - **Messages.** Keep `cloud metadata host refused: {host}`, `cannot resolve host: {host}` and the existing private
