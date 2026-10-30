@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>yamlreel by Nitin Sijwali: turn a YAML file into a narrated explainer video</title>
+<meta name="description" content="yamlreel is an open-source Python tool by Nitin Sijwali that turns a short YAML file into a finished video: animated diagrams, typed code, original music and a voiceover in your own voice, for YouTube Shorts, YouTube and LinkedIn.">
+<meta name="author" content="Nitin Sijwali">
+<link rel="canonical" href="https://nsijwali.github.io/yamlreel/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="yamlreel by Nitin Sijwali">
+<meta property="og:description" content="Write a short YAML file. Get a finished video. Open source, rendered on your own machine.">
+<meta property="og:url" content="https://nsijwali.github.io/yamlreel/">
+<meta property="og:site_name" content="yamlreel">
+<meta property="og:image" content="https://nsijwali.github.io/yamlreel/social-preview.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="yamlreel: Write YAML. Get a video. A diagram of a YAML spec and VoiceStudio feeding yamlreel and ffmpeg.">
+<meta name="twitter:card" content="summary_large_image">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareSourceCode",
+  "name": "yamlreel",
+  "description": "Open-source Python tool that turns a YAML file into a finished explainer video: animated diagrams, typed code, original music and an optional voiceover in your own voice.",
+  "author": {
+    "@type": "Person",
+    "name": "Nitin Sijwali",
+    "alternateName": "nsijwali",
+    "url": "https://github.com/nsijwali"
+  },
+  "codeRepository": "https://github.com/nsijwali/yamlreel",
+  "url": "https://nsijwali.github.io/yamlreel/",
+  "programmingLanguage": "Python",
+  "runtimePlatform": "Python 3.10+",
+  "license": "https://opensource.org/licenses/MIT",
+  "version": "0.2.1",
+  "targetProduct": {
+    "@type": "SoftwareApplication",
+    "name": "yamlreel",
+    "applicationCategory": "MultimediaApplication",
+    "operatingSystem": "macOS, Linux, Windows",
+    "downloadUrl": "https://pypi.org/project/yamlreel/"
+  },
+  "keywords": "text to video, YouTube Shorts generator, explainer video, YAML, Python, AI voiceover",
+  "image": "https://nsijwali.github.io/yamlreel/social-preview.png"
+}
+</script>
+<style>
+  :root { --bg: #0b1220; --card: #111a2e; --fg: #e8edf4; --muted: #94a3b8; --accent: #f5bd4c; --link: #78aaeb; --line: #23304a; }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #f7f8fb; --card: #ffffff; --fg: #0f172a; --muted: #475569; --accent: #8a5a10; --link: #1d4ed8; --line: #e2e8f0; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 17px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 48px 20px 64px; }
+  h1 { font-size: 3rem; margin: 0; letter-spacing: -0.02em; }
+  .tag { color: var(--accent); font-size: 1.35rem; margin: 4px 0 6px; }
+  .by { color: var(--muted); margin: 0 0 28px; }
+  a { color: var(--link); }
+  img.demo { width: 100%; border-radius: 12px; border: 1px solid var(--line); }
+  .actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 24px 0 8px; }
+  .btn { display: inline-block; padding: 10px 18px; border-radius: 10px; background: var(--card); border: 1px solid var(--line); text-decoration: none; color: var(--fg); font-weight: 600; }
+  .btn.primary { background: var(--accent); color: #111; border-color: var(--accent); }
+  pre { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; overflow-x: auto; font-size: 0.95rem; }
+  ul { padding-left: 1.2em; }
+  h2 { margin-top: 40px; font-size: 1.4rem; }
+  footer { margin-top: 48px; color: var(--muted); font-size: 0.9rem; border-top: 1px solid var(--line); padding-top: 16px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>yamlreel</h1>
+  <p class="tag">Write a short YAML file. Get a finished video.</p>
+  <p class="by">An open-source project by <strong>Nitin Sijwali</strong> (<a href="https://github.com/nsijwali">@nsijwali</a>)</p>
+
+  <img class="demo" src="demo.gif" width="720" height="405" alt="A diagram building itself: a YAML spec and VoiceStudio feed yamlreel, which hands frames and audio to ffmpeg to produce the video">
+
+  <div class="actions">
+    <a class="btn primary" href="https://github.com/nsijwali/yamlreel/releases/tag/v0.2.0"><span aria-hidden="true">▶</span> Watch the 1-minute demo</a>
+    <a class="btn" href="https://github.com/nsijwali/yamlreel">GitHub</a>
+    <a class="btn" href="https://pypi.org/project/yamlreel/">PyPI</a>
+  </div>
+
+  <p>yamlreel turns a YAML file into a finished video: system-design explainers, code tips, project launches and
+  feature demos for YouTube Shorts, YouTube and LinkedIn. It draws animated diagrams and typed code, generates
+  original background music, and adds an optional voiceover in your own cloned voice, all on your own machine.</p>
+
+  <h2>Install</h2>
+<pre><code>pip install "yamlreel[ffmpeg]"
+yamlreel init system-design my-video.yaml
+yamlreel render my-video.yaml --preview</code></pre>
+
+  <h2>What you get from one file</h2>
+  <ul>
+    <li>A vertical cut for Shorts and a landscape cut for YouTube or LinkedIn</li>
+    <li>A thumbnail and a contact sheet to review before you post</li>
+    <li>A ready-to-paste title, description and hashtags</li>
+    <li>Narration in your own voice through a local text-to-speech server such as VoiceStudio; nothing is sent to the cloud</li>
+  </ul>
+
+  <h2>A video is a list of scenes</h2>
+<pre><code>theme: midnight
+formats: [vertical, landscape]
+scenes:
+  - type: type
+    text: What is a cache stampede?
+    narration: Ever seen one expired cache key take down a whole database?
+  - type: bullets
+    title: The fix
+    items: [Let one request rebuild the key, Serve stale while it refreshes, Add jitter to every TTL]
+  - type: stat
+    value: "10,000 → 1"
+    label: database queries per expiry</code></pre>
+
+  <img class="demo" src="preview.jpg" width="1600" height="980" alt="Every scene of the cache-stampede example video: a typed hook, a cache diagram, bullet lists, highlighted code, a big stat and an end card">
+
+  <footer>
+    yamlreel is created and maintained by Nitin Sijwali. MIT licensed.
+    <a href="https://github.com/nsijwali/yamlreel">Source on GitHub</a> ·
+    <a href="https://github.com/nsijwali/yamlreel/blob/main/CONTRIBUTING.md">Contribute</a>
+  </footer>
+</main>
+</body>
+</html>

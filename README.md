@@ -4,6 +4,8 @@
 
 **Write a short YAML file. Get a finished video.**
 
+<sub>Created by <a href="https://github.com/nsijwali">Nitin Sijwali</a></sub>
+
 yamlreel turns a YAML file into a finished video: system-design explainers, code tips, project launches and
 feature demos for YouTube, Shorts and LinkedIn, with diagrams, typed code, original music and an optional
 voiceover in your own voice.
@@ -315,3 +317,10 @@ Specs are treated as untrusted input. File access is confined, URL captures are 
 access come only from you. [SECURITY.md](https://github.com/nsijwali/yamlreel/blob/main/SECURITY.md) covers the details and how to report a vulnerability.
 
 yamlreel is [MIT licensed](https://github.com/nsijwali/yamlreel/blob/main/LICENSE). Tools you pair it with keep their own licences.
+
+## Author
+
+yamlreel is created and maintained by **Nitin Sijwali** ([@nsijwali](https://github.com/nsijwali)), a software
+engineer in Bangalore, India. It started as a way to post a short system-design explainer every day without
+editing videos by hand. Project website: [nsijwali.github.io/yamlreel](https://nsijwali.github.io/yamlreel/).
+If you use yamlreel in your work, GitHub's **Cite this repository** button gives a ready-made citation.
