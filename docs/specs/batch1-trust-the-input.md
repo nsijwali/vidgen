@@ -68,6 +68,12 @@ evaluated in this order:
   the response relayed back one-way), so a reused or pipelined connection can never carry an unchecked second request;
   `CONNECT` tunnels are spliced after the check. A `CONNECT` port must be ASCII digits in 1..65535 (else 400). Every
   403 refusal carries `X-Yamlreel-Refused: 1`.
+  The upstream response head is rewritten (`Connection`/`Keep-Alive`/`Proxy-Connection` dropped, `Connection: close` and
+  `Proxy-Connection: close` added; body framing headers untouched), the body is relayed until its framing says it is
+  complete (HEAD/1xx/204/304 none, `Content-Length`, chunked, else upstream close) and the client socket is then closed.
+  A request with a malformed or conflicting `Content-Length`, or a bare LF/CR in its head, gets 400.
+  Known and accepted: `Expect: 100-continue` is not special-cased, port 0 fails at connect, and IDNA 2003 (Python's
+  codec) is used instead of UTS 46.
 - **Follow-up PR (shots.py, after PR B):** raise `CaptureError` when the proxy refusal header is seen (so a refused
   redirect hop or sub-resource fails the capture instead of rendering a partial page), and launch Chromium with
   `--force-webrtc-ip-handling-policy=disable_non_proxied_udp` so WebRTC cannot bypass the proxy.

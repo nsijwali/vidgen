@@ -8,6 +8,7 @@ import http.server
 import ipaddress
 import socket
 import threading
+import time
 from urllib.parse import urlsplit
 
 import pytest
@@ -334,6 +335,8 @@ def _keepalive_upstream(received: list[bytes]):
 
 @pytest.mark.parametrize("pipelined", [False, True])
 def test_a_second_request_on_the_same_proxy_connection_is_never_forwarded(pipelined, connect_spy):
+    """The upstream ignores `Connection: close`; the proxy still ends the response and closes the client socket."""
+    import time
     from yamlreel.pinproxy import PinningProxy
     received: list[bytes] = []
     up = _keepalive_upstream(received)
@@ -343,23 +346,116 @@ def test_a_second_request_on_the_same_proxy_connection_is_never_forwarded(pipeli
     try:
         with PinningProxy(allow_private=True) as px:
             ph = urlsplit(px.url)
-            with socket.create_connection((ph.hostname, ph.port), timeout=5) as s:
-                s.settimeout(1.5)
-                if pipelined:
-                    s.sendall(first + second)
-                else:
-                    s.sendall(first)
-                    assert b"hello" in s.recv(65536)
-                    s.sendall(second)
-                try:
-                    while s.recv(65536):
+            t0 = time.monotonic()
+            with socket.create_connection((ph.hostname, ph.port), timeout=10) as s:
+                s.sendall(first + second if pipelined else first)
+                data = b""
+                while chunk := s.recv(65536):  # ends by a clean close right after the body, not after 30 s
+                    data += chunk
+                head = data.split(b"\r\n\r\n")[0].lower()
+                assert data.endswith(b"hello") and b"connection: close" in head and b"proxy-connection: close" in head
+                assert b"keep-alive" not in head and data.count(b"HTTP/1.1") == 1
+                if not pipelined:  # the connection is gone: nothing may be forwarded on it
+                    try:
+                        s.sendall(second)
+                        assert s.recv(65536) == b""
+                    except OSError:
                         pass
-                except socket.timeout:
-                    pass
-        assert received == [f"GET /one HTTP/1.1".encode()]  # only the checked request reached the upstream
+            assert time.monotonic() - t0 < 5
+        assert received == [b"GET /one HTTP/1.1"]  # only the checked request reached the upstream
         assert {a for a, _ in connect_spy} == {"127.0.0.1"}
     finally:
         up.close()
+
+
+def _one_shot_upstream(response: bytes, close: bool = True):
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+
+    def serve():
+        c, _ = srv.accept()
+        buf = b""
+        while b"\r\n\r\n" not in buf:
+            buf += c.recv(65536)
+        c.sendall(response)
+        if close:
+            c.close()
+        else:
+            time.sleep(8)
+
+    threading.Thread(target=serve, daemon=True).start()
+    return srv
+
+
+@pytest.mark.parametrize("method,response,tail", [
+    ("GET", b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: keep-alive\r\n\r\n"
+            b"5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n", b"0\r\n\r\n"),
+    ("GET", b"HTTP/1.0 200 OK\r\nKeep-Alive: timeout=5\r\n\r\nclose-delimited body", b"close-delimited body"),
+    ("HEAD", b"HTTP/1.1 200 OK\r\nContent-Length: 99\r\nConnection: keep-alive\r\n\r\n", b"\r\n\r\n"),
+    ("GET", b"HTTP/1.1 204 No Content\r\nConnection: keep-alive\r\n\r\n", b"\r\n\r\n"),
+    ("GET", b"HTTP/1.1 304 Not Modified\r\nConnection: keep-alive\r\n\r\n", b"\r\n\r\n"),
+])
+@pytest.mark.parametrize("hold_open", [False, True])
+def test_response_framing_survives_the_head_rewrite(method, response, tail, hold_open, connect_spy):
+    """Bodies are forwarded as the upstream framed them; with a framed body the proxy closes without waiting for an
+    upstream that keeps the connection open (close-delimited bodies legitimately end only when it closes)."""
+    import time
+    from yamlreel.pinproxy import PinningProxy
+    if hold_open and response.startswith(b"HTTP/1.0"):
+        pytest.skip("a close-delimited body ends only with the upstream close")
+    up = _one_shot_upstream(response, close=not hold_open)
+    try:
+        with PinningProxy(allow_private=True) as px:
+            t0 = time.monotonic()
+            got = _raw(px.url, f"{method} http://127.0.0.1:{up.getsockname()[1]}/ HTTP/1.1\r\nHost: x\r\n\r\n".encode())
+            assert time.monotonic() - t0 < 5
+        head, _, body = got.partition(b"\r\n\r\n")
+        low = head.lower()
+        assert b"connection: close" in low and b"proxy-connection: close" in low and b"keep-alive" not in low
+        assert body == response.partition(b"\r\n\r\n")[2] if method == "GET" and b"204" not in response else True
+        if b"chunked" in response:
+            assert b"transfer-encoding: chunked" in low and got.endswith(tail)
+        if b"content-length: 99" in low:
+            assert b"content-length: 99" in low and body == b""  # HEAD: framing header kept, no body
+    finally:
+        up.close()
+
+
+@pytest.mark.parametrize("headers", [
+    "Content-Length: abc", "Content-Length: -1", "Content-Length: 1\r\nContent-Length: 2", "Content-Length: 1 2",
+])
+def test_bad_or_conflicting_content_length_is_a_400(headers, connect_spy):
+    from yamlreel.pinproxy import PinningProxy
+    with PinningProxy(allow_private=True) as px:
+        resp = _raw(px.url, f"POST http://127.0.0.1:9/ HTTP/1.1\r\nHost: x\r\n{headers}\r\n\r\nab".encode())
+    assert resp.split(b"\r\n")[0].startswith(b"HTTP/1.1 400")
+    assert [c for c in connect_spy if c[1] == 9] == []
+
+
+def test_identical_duplicate_content_length_is_accepted(connect_spy):
+    from yamlreel.pinproxy import PinningProxy
+    up = _one_shot_upstream(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+    try:
+        with PinningProxy(allow_private=True) as px:
+            resp = _raw(px.url, (f"POST http://127.0.0.1:{up.getsockname()[1]}/ HTTP/1.1\r\nHost: x\r\n"
+                                 "Content-Length: 1\r\nContent-Length: 1\r\n\r\nA").encode())
+        assert resp.endswith(b"ok")
+    finally:
+        up.close()
+
+
+@pytest.mark.parametrize("raw", [
+    b"GET http://127.0.0.1:9/ HTTP/1.1\r\nHost: x\nX-Evil: 1\r\n\r\n",
+    b"GET http://127.0.0.1:9/ HTTP/1.1\r\nHost: x\rX-Evil: 1\r\n\r\n",
+    b"CONNECT 127.0.0.1:9 HTTP/1.1\r\nHost: x\nX: 1\r\n\r\n",
+])
+def test_a_bare_lf_or_cr_in_the_head_is_a_400(raw, connect_spy):
+    from yamlreel.pinproxy import PinningProxy
+    with PinningProxy(allow_private=True) as px:
+        resp = _raw(px.url, raw)
+    assert resp.split(b"\r\n")[0].startswith(b"HTTP/1.1 400")
+    assert [c for c in connect_spy if c[1] == 9] == []
 
 
 def test_the_forwarded_request_asks_for_connection_close_and_keeps_its_body(connect_spy):
