@@ -13,9 +13,11 @@ from PIL import Image, ImageDraw
 
 from . import music as music_mod
 from . import voice as voice_mod
+from .config import HARD_LIMITS
 from .safety import UnsafeInput, resolve_local
 from .scenes import Ctx, Scene, build_scene, make_caption
-from .specs import FORMATS
+from .shots import CaptureError
+from .specs import FORMATS, SpecError, check_frame_budget
 from .textkit import blit, ease_out, make_block
 from .theme import font
 
@@ -23,6 +25,7 @@ FADE_IN = 0.25
 YT_TITLE_MAX = 100
 YT_DESC_MAX = 5000
 SHORTS_MAX_SECONDS = 180
+MAX_WATERMARK_PIXELS = 16_000_000  # a watermark image larger than this is refused
 
 
 class RenderError(RuntimeError):
@@ -42,6 +45,16 @@ class Runtime:
         return cls(roots=[Path(spec.get("_dir", "."))])
 
 
+def scene_seconds(spec: dict[str, Any]) -> list[float]:
+    """Each scene's length in the video: its spec length, rounded to whole beats when music.snap is on."""
+    seconds = [float(s["seconds"]) for s in spec["scenes"]]
+    music = spec["music"]
+    if music.get("snap") and music.get("bpm"):
+        beat = 60.0 / float(music["bpm"])
+        seconds = [max(beat, round(s / beat) * beat) for s in seconds]
+    return seconds
+
+
 def slugify(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-") or "video"
 
@@ -58,12 +71,14 @@ class Timeline:
         self.ctx = Ctx(W, H, spec["_theme_obj"], workdir, Path(spec.get("_dir", ".")), roots=list(rt.roots),
                        allow_private_hosts=rt.allow_private_hosts, chromium=rt.chromium)
         scenes_spec = [dict(s) for s in spec["scenes"]]
-        music = spec["music"]
-        if music.get("snap") and music.get("bpm"):
-            beat = 60.0 / float(music["bpm"])
-            for s in scenes_spec:
-                s["seconds"] = max(beat, round(s["seconds"] / beat) * beat)
-        self.scenes: list[Scene] = [build_scene(s, self.ctx) for s in scenes_spec]
+        for s, seconds in zip(scenes_spec, scene_seconds(spec)):
+            s["seconds"] = seconds
+        self.scenes: list[Scene] = []
+        for i, s in enumerate(scenes_spec):
+            try:
+                self.scenes.append(build_scene(s, self.ctx))
+            except CaptureError as e:
+                raise CaptureError(f"scenes[{i}].source: {e}") from e
         self.starts: list[float] = []
         t = 0.0
         for sc in self.scenes:
@@ -89,8 +104,9 @@ class Timeline:
                 raise RenderError(f"watermark image not found: {p}")
             try:
                 with Image.open(p) as im:
-                    if im.width * im.height > 16_000_000:
-                        raise RenderError("watermark image is too large (16 megapixel limit)")
+                    if im.width * im.height > MAX_WATERMARK_PIXELS:
+                        raise RenderError(f"watermark image is {im.width}x{im.height}; the limit is "
+                                          f"{MAX_WATERMARK_PIXELS} pixels (MAX_WATERMARK_PIXELS)")
                     logo = im.convert("RGBA")
             except OSError as e:
                 raise RenderError(f"cannot read watermark image: {e}") from e
@@ -262,9 +278,18 @@ def render(spec: dict[str, Any], fmt: str, out_dir: Path, fps: int = 30, scale: 
             clips = voice_mod.prepare_narration(spec, rt.voice, cache, lambda p: resolve_local(p, Path(spec.get("_dir", ".")), rt.roots))
         except (voice_mod.VoiceError, UnsafeInput) as e:
             raise RenderError(f"voiceover: {e}") from e
-        limit = spec["limits"]["max_seconds"]
-        if sum(sc["seconds"] for sc in spec["scenes"]) > limit:
-            raise RenderError(f"with narration the video is longer than limits.max_seconds ({limit}s)")
+        # The spec limits were checked on load; check again now that narration has stretched the scenes and beat
+        # snapping has rounded them, and in case the caller never validated. Absolute limits always apply.
+        limits = spec.get("limits") or {}
+        limit = min(limits.get("max_seconds", HARD_LIMITS["max_seconds"]), HARD_LIMITS["max_seconds"])
+        total_seconds = sum(scene_seconds(spec))
+        if total_seconds > limit:
+            raise RenderError(f"after narration and beat snapping the video is {total_seconds:.1f}s; "
+                              f"the limit is {limit:g}s (limits.max_seconds)")
+        try:
+            check_frame_budget(total_seconds, fps, 1)
+        except SpecError as e:
+            raise RenderError(str(e)) from e
         tl = Timeline(spec, fmt, cache, scale, rt)
         total = tl.total
         narration = voice_mod.write_wav(work / "narration.wav", voice_mod.build_track(spec, clips, total)) if clips else None

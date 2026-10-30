@@ -15,7 +15,7 @@ from .voice import VoiceError, VoiceServer
 from .render import RenderError, Runtime, render, share_copy
 from .safety import UnsafeInput
 from .shots import CaptureError
-from .specs import FORMATS, SpecError, load_spec
+from .specs import FORMATS, SpecError, check_frame_budget, load_spec
 from .theme import FontError, set_font_dirs
 
 
@@ -77,7 +77,10 @@ def cmd_render(args: argparse.Namespace) -> int:
     formats = list(FORMATS) if args.format == "all" else [args.format] if args.format else spec["formats"]
     out_dir = Path(args.out) if args.out else _confined_output_dir(spec, cfg)
     scale = 0.5 if args.preview else 1.0
+    if args.fps is not None and not 1 <= args.fps <= 60:
+        raise SpecError("--fps must be an integer between 1 and 60")
     fps = 12 if args.preview else (args.fps or int(spec["fps"]))
+    check_frame_budget(sum(s["seconds"] for s in spec["scenes"]), fps, len(formats))
     rt = _runtime(spec, cfg, args.music, no_voice=args.no_voice)
     results = {}
     for fmt in formats:

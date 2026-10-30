@@ -73,6 +73,12 @@ def load_shot(source: str, opts: dict, workdir: Path, base_dir: Path, roots: lis
     return _open_image(cache)
 
 
+def full_page_clip_height(vw: int, scale: float, page_height: float) -> int:
+    """CSS pixels of a full-page capture to keep, so that width x height x scale^2 stays within MAX_CAPTURE_PIXELS."""
+    most = max(1, int(MAX_CAPTURE_PIXELS // (vw * scale * scale)))
+    return max(1, min(int(page_height), most))
+
+
 def _request_allowed(url: str, roots: list[Path], allow_private: bool) -> bool:
     scheme = urlparse(url).scheme
     if scheme in ("data", "blob", "about"):
@@ -90,14 +96,17 @@ def _request_allowed(url: str, roots: list[Path], allow_private: bool) -> bool:
 
 
 def _capture(url: str, opts: dict, dest: Path, roots: list[Path], allow_private: bool, chromium: str | None) -> None:
+    vw, vh = opts.get("viewport", list(DEFAULT_VIEWPORT))
+    scale = opts.get("scale", DEFAULT_SCALE)
+    problem = capture_size_problem(vw, vh, scale)  # a spec is checked on load; this covers callers that skip that
+    if problem:
+        raise CaptureError(f"cannot capture {url}: {problem}")
     try:
         from playwright.sync_api import Error as PwError
         from playwright.sync_api import sync_playwright
     except ImportError as e:  # pragma: no cover
         raise CaptureError("capturing a URL needs playwright: pip install playwright") from e
 
-    vw, vh = opts.get("viewport", [1920, 1080])
-    scale = opts.get("scale", 2)
     blocked: list[str] = []
 
     def guard(route) -> None:  # every request the page makes, including redirects and sub-resources
@@ -129,7 +138,14 @@ def _capture(url: str, opts: dict, dest: Path, roots: list[Path], allow_private:
                 if "scroll_y" in opts:
                     page.evaluate("y => window.scrollTo(0, y)", int(opts["scroll_y"]))
                 page.wait_for_timeout(int(opts.get("wait_ms", 800)))
-                page.screenshot(path=str(dest), full_page=bool(opts.get("full_page", False)))
+                if opts.get("full_page", False):
+                    # a very tall page would exceed MAX_CAPTURE_PIXELS: keep only the top of it
+                    height = page.evaluate("Math.max(document.documentElement.scrollHeight, "
+                                           "document.body ? document.body.scrollHeight : 0)")
+                    clip = {"x": 0, "y": 0, "width": vw, "height": full_page_clip_height(vw, scale, height or vh)}
+                    page.screenshot(path=str(dest), full_page=True, clip=clip)
+                else:
+                    page.screenshot(path=str(dest))
             finally:
                 browser.close()
     except PwError as e:
