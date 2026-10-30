@@ -9,16 +9,19 @@ retries), port 0 in a plain-HTTP URL is passed to the connect (it fails there), 
 codec rather than UTS 46 (the normalised name is the one that is judged and resolved)."""
 from __future__ import annotations
 
+import re
 import select
 import socket
 import socketserver
 import threading
+import time
 from urllib.parse import urlsplit
 
 from .safety import UnsafeInput, pinned_ips
 
 MAX_HEAD = 64 * 1024
 IDLE_SECONDS = 30
+RELAY_DEADLINE = 120.0  # seconds one response (head and body) may take in total
 
 
 def _connect(host: str, port: int, allow_private: bool) -> socket.socket:
@@ -38,13 +41,17 @@ def _parse_port(text: str) -> int:
     return int(text)
 
 
+_CHUNK_SIZE = re.compile(rb"[0-9a-fA-F]{1,16}")
+
+
 class _Chunked:
     """Follows chunked framing just far enough to know where the body ends."""
 
     def __init__(self) -> None:
         self.state, self.line, self.left, self.done = "size", b"", 0, False
 
-    def feed(self, data: bytes) -> None:
+    def feed(self, data: bytes) -> int:
+        """Consume `data` up to the end of the body; return how many bytes belong to it (the rest is not forwarded)."""
         i = 0
         while i < len(data) and not self.done:
             if self.state == "data":
@@ -55,72 +62,116 @@ class _Chunked:
                     self.state = "crlf"
                 continue
             j = data.find(b"\n", i)
+            end = len(data) if j < 0 else j + 1
+            if len(self.line) + end - i > MAX_HEAD:
+                raise ValueError("chunk header too long")
+            self.line += data[i:end]
+            i = end
             if j < 0:
-                self.line += data[i:]
-                i = len(data)
-                if len(self.line) > MAX_HEAD:
-                    raise ValueError("chunk header too long")
                 continue
-            line = (self.line + data[i:j + 1]).strip()
-            self.line, i = b"", j + 1
+            line, self.line = self.line.strip(), b""
             if self.state == "size":
-                self.left = int(line.split(b";")[0], 16)
+                size = line.split(b";")[0].strip()
+                if not _CHUNK_SIZE.fullmatch(size):
+                    raise ValueError("bad chunk size")
+                self.left = int(size, 16)
                 self.state = "trailer" if self.left == 0 else "data"
             elif self.state == "crlf":
                 self.state = "size"
             elif not line:
                 self.done = True
+        return i
 
 
 def _relay_response(upstream: socket.socket, client: socket.socket, method: str) -> None:
     """Copy the upstream answer to the client with a rewritten head (`Connection: close`, no keep-alive), stopping as
     soon as the body is complete. Nothing flows client -> upstream here, so a second request on the same client
-    connection is never forwarded unchecked, and the client socket is closed afterwards so it is not reused."""
+    connection is never forwarded unchecked. Interim 1xx heads are passed on unchanged until the final head. The
+    whole relay is bounded by RELAY_DEADLINE and ends when the client goes away."""
+    deadline = time.monotonic() + RELAY_DEADLINE
+    watch = [upstream, client]
+    started = False
 
     def read() -> bytes:
-        r, _, _ = select.select([upstream], [], [], IDLE_SECONDS)
-        return upstream.recv(65536) if r else b""
+        nonlocal watch
+        while True:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return b""
+            ready, _, _ = select.select(watch, [], [], min(IDLE_SECONDS, left))
+            if not ready:
+                return b""
+            if client in ready:
+                if not client.recv(65536):  # the client left; extra bytes (a pipelined request) are dropped
+                    return b""
+                watch = [upstream]
+                continue
+            return upstream.recv(65536)
 
-    buf = b""
-    while b"\r\n\r\n" not in buf:
-        data = read()
-        if not data or len(buf) > MAX_HEAD:
-            raise OSError("upstream closed without a complete response head")
-        buf += data
-    head, _, body = buf.partition(b"\r\n\r\n")
-    lines = head.decode("latin-1").split("\r\n")
-    hdrs = {}
-    for h in lines[1:]:
-        hdrs.setdefault(h.split(":", 1)[0].strip().lower(), h.split(":", 1)[-1].strip())
-    kept = [h for h in lines[1:]
-            if h.split(":", 1)[0].strip().lower() not in ("connection", "keep-alive", "proxy-connection")]
-    client.sendall("\r\n".join([lines[0], *kept, "Connection: close", "Proxy-Connection: close"]).encode("latin-1")
-                   + b"\r\n\r\n")
+    def send(data: bytes) -> None:
+        nonlocal started
+        started = True
+        client.sendall(data)
+
     try:
-        status = int(lines[0].split(" ", 2)[1])
-    except (IndexError, ValueError):
-        status = 0
-    remaining: int | None = None  # None: close-delimited
-    chunked: _Chunked | None = None
-    if method == "HEAD" or status in (204, 304) or 100 <= status < 200:
-        return
-    if "chunked" in hdrs.get("transfer-encoding", "").lower():
-        chunked = _Chunked()
-    elif hdrs.get("content-length", "").isascii() and hdrs.get("content-length", "").isdigit():
-        remaining = int(hdrs["content-length"])
-    while True:
-        if remaining is not None:
-            body = body[:remaining]
-            remaining -= len(body)
-        if chunked is not None:
-            chunked.feed(body)
-        if body:
-            client.sendall(body)
-        if remaining == 0 or (chunked is not None and chunked.done):
+        buf = b""
+        while True:
+            while True:
+                end = buf.find(b"\r\n\r\n")
+                if end >= 0:
+                    break
+                if len(buf) > MAX_HEAD:
+                    raise ValueError("upstream response head too large")
+                data = read()
+                if not data:
+                    raise OSError("upstream closed without a complete response head")
+                buf += data
+            if end > MAX_HEAD:
+                raise ValueError("upstream response head too large")
+            head, body = buf[:end], buf[end + 4:]
+            lines = head.decode("latin-1").split("\r\n")
+            try:
+                status = int(lines[0].split(" ", 2)[1])
+            except (IndexError, ValueError):
+                status = 0
+            if 100 <= status < 200 and status != 101:
+                send(buf[:end + 4])  # interim answer (100, 103, ...): unchanged, the final head follows
+                buf = body
+                continue
+            break
+        hdrs: dict[str, str] = {}
+        for h in lines[1:]:
+            hdrs.setdefault(h.split(":", 1)[0].strip().lower(), h.split(":", 1)[-1].strip())
+        kept = [h for h in lines[1:]
+                if h.split(":", 1)[0].strip().lower() not in ("connection", "keep-alive", "proxy-connection")]
+        send("\r\n".join([lines[0], *kept, "Connection: close", "Proxy-Connection: close"]).encode("latin-1")
+             + b"\r\n\r\n")
+        if method == "HEAD" or status in (101, 204, 304):  # 101 is never relayed as an upgrade: final, then close
             return
-        body = read()
-        if not body:
+        remaining: int | None = None  # None: close-delimited
+        chunked: _Chunked | None = None
+        length = hdrs.get("content-length", "")
+        if "chunked" in hdrs.get("transfer-encoding", "").lower():
+            chunked = _Chunked()
+        elif length.isascii() and length.isdigit():
+            remaining = int(length)
+        while True:
+            if remaining is not None:
+                body = body[:remaining]
+                remaining -= len(body)
+            elif chunked is not None:
+                body = body[:chunked.feed(body)]
+            if body:
+                send(body)
+            if remaining == 0 or (chunked is not None and chunked.done):
+                return
+            body = read()
+            if not body:
+                return
+    except (OSError, ValueError):
+        if started:  # a 502 into a half-sent response would be garbage: just let the close truncate it
             return
+        raise
 
 
 def _splice(a: socket.socket, b: socket.socket) -> None:
@@ -145,10 +196,14 @@ class _Handler(socketserver.BaseRequestHandler):
             head = b""
             while b"\r\n\r\n" not in head:
                 chunk = client.recv(8192)
-                if not chunk or len(head) > MAX_HEAD:
+                if not chunk:
                     return
                 head += chunk
+                if b"\r\n\r\n" not in head and len(head) > MAX_HEAD:
+                    return
             head, _, rest = head.partition(b"\r\n\r\n")
+            if len(head) > MAX_HEAD:
+                return
             if b"\n" in head.replace(b"\r\n", b"") or b"\r" in head.replace(b"\r\n", b""):
                 client.sendall(b"HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
                 return  # a bare LF or CR could smuggle a header past the checks below
@@ -205,10 +260,6 @@ class _Handler(socketserver.BaseRequestHandler):
                     _relay_response(upstream, client, method)
             finally:
                 upstream.close()
-                try:
-                    client.shutdown(socket.SHUT_RDWR)  # so a client never reuses this connection
-                except OSError:
-                    pass
         except UnsafeInput as e:
             msg = str(e).encode()
             client.sendall(b"HTTP/1.1 403 Forbidden\r\nConnection: close\r\nX-Yamlreel-Refused: 1\r\n"
@@ -216,6 +267,11 @@ class _Handler(socketserver.BaseRequestHandler):
         except (OSError, ValueError):
             try:
                 client.sendall(b"HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
+            except OSError:
+                pass
+        finally:
+            try:
+                client.shutdown(socket.SHUT_RDWR)  # after any answer above, so a client never reuses the connection
             except OSError:
                 pass
 
