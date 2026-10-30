@@ -23,6 +23,11 @@ FAKE_DNS: dict[str, list[str]] = {
     "mapped.test": ["::ffff:100.64.0.1"],
     "dupes.test": ["93.184.216.34", "93.184.216.34"],
     "empty.test": [],
+    "blocked.test": ["0.0.0.0"],
+    "blocked6.test": ["::"],
+    "blockedmap.test": ["::ffff:0.0.0.0"],
+    "blockedmany.test": ["0.0.0.0", "::"],
+    "halfblocked.test": ["0.0.0.0", "93.184.216.34"],
 }
 
 
@@ -726,3 +731,140 @@ def test_a_response_has_an_overall_deadline(monkeypatch, connect_spy):
             assert got.split(b"\r\n")[0].startswith(b"HTTP/1.1 502")
     finally:
         up.close()
+
+
+@pytest.mark.parametrize("request_bytes,host", [
+    (b"CONNECT 169.254.169.254:443 HTTP/1.1\r\n\r\n", "169.254.169.254"),
+    (b"CONNECT 100.64.0.1:443 HTTP/1.1\r\n\r\n", "100.64.0.1"),
+    (b"GET http://100.64.0.1/x HTTP/1.1\r\nHost: x\r\n\r\n", "100.64.0.1"),
+])
+def test_the_proxy_records_every_refusal_itself(request_bytes, host, connect_spy):
+    """HTTPS refusals never reach the page as a response, so the capture reads the proxy's own record."""
+    from yamlreel.pinproxy import PinningProxy
+    with PinningProxy(allow_private=False) as px:
+        assert px.refusals == []
+        _raw(px.url, request_bytes)
+        refusals = px.refusals
+    assert len(refusals) == 1 and refusals[0][0] == host and refusals[0][1]
+
+
+def test_an_allowed_request_records_no_refusal(connect_spy):
+    from yamlreel.pinproxy import PinningProxy
+    srv = _redirecting_server("http://127.0.0.1/")
+    try:
+        with PinningProxy(allow_private=True) as px:
+            _get(px.url, f"http://127.0.0.1:{srv.server_address[1]}/")
+            assert px.refusals == []
+    finally:
+        srv.shutdown()
+
+
+def test_the_refused_header_is_stripped_from_upstream_responses(connect_spy):
+    """Only the proxy may say "refused": a site that sends the header must not be able to forge it."""
+    from yamlreel.pinproxy import PinningProxy
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(403)
+            self.send_header("X-Yamlreel-Refused", "1")
+            self.send_header("Content-Length", "2")
+            self.end_headers()
+            self.wfile.write(b"no")
+
+        def log_message(self, *a): ...
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        with PinningProxy(allow_private=True) as px:
+            resp = _get(px.url, f"http://127.0.0.1:{srv.server_address[1]}/")
+            assert px.refusals == []
+    finally:
+        srv.shutdown()
+    assert b" 403 " in resp.split(b"\r\n")[0] + b" "
+    assert b"x-yamlreel-refused" not in resp.lower()
+
+
+@pytest.mark.parametrize("request_bytes", [
+    b"CONNECT empty.test:443 HTTP/1.1\r\n\r\n",
+    b"GET http://empty.test/ HTTP/1.1\r\nHost: x\r\n\r\n",
+])
+def test_an_unresolvable_host_is_refused_with_403_but_not_recorded(request_bytes, connect_spy):
+    """A dead name is not a policy decision: the request fails, the capture does not."""
+    from yamlreel.pinproxy import PinningProxy
+    with PinningProxy(allow_private=False) as px:
+        resp = _raw(px.url, request_bytes)
+        assert px.refusals == [] and px.refusal_count == 0 and px.first_refusal is None
+    assert b" 403 " in resp.split(b"\r\n")[0] + b" "
+
+
+def test_the_unresolvable_error_is_still_an_unsafe_input():
+    from yamlreel.safety import Unresolvable
+    with pytest.raises(UnsafeInput) as e:
+        pinned_ips("empty.test", False)
+    assert isinstance(e.value, Unresolvable)
+
+
+def test_recorded_refusals_are_bounded_but_counted(connect_spy):
+    from yamlreel.pinproxy import MAX_RECORDED_REFUSALS, PinningProxy
+    with PinningProxy(allow_private=False) as px:
+        for i in range(MAX_RECORDED_REFUSALS + 5):
+            px.record_refusal(f"h{i}.test", f"reason {i}")
+        assert len(px.refusals) == MAX_RECORDED_REFUSALS
+        assert px.refusal_count == MAX_RECORDED_REFUSALS + 5
+        assert px.first_refusal == ("h0.test", "reason 0")
+
+
+def test_the_refused_header_is_stripped_from_interim_responses_too(connect_spy):
+    from yamlreel.pinproxy import PinningProxy
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+
+    def serve():
+        c, _ = srv.accept()
+        c.recv(65536)
+        c.sendall(b"HTTP/1.1 103 Early Hints\r\nX-Yamlreel-Refused: 1\r\nLink: </a.css>\r\n\r\n"
+                  b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+        c.close()
+
+    threading.Thread(target=serve, daemon=True).start()
+    try:
+        with PinningProxy(allow_private=True) as px:
+            resp = _get(px.url, f"http://127.0.0.1:{srv.getsockname()[1]}/")
+    finally:
+        srv.close()
+    assert b" 103 " in resp and b"Link: </a.css>" in resp and resp.endswith(b"ok")
+    assert b"x-yamlreel-refused" not in resp.lower()
+
+
+@pytest.mark.parametrize("host", ["blocked.test", "blocked6.test", "blockedmap.test", "blockedmany.test"])
+def test_a_name_a_dns_blocker_answers_with_unspecified_is_unresolvable_not_a_policy_refusal(host):
+    """Pi-hole/NextDNS answer 0.0.0.0 or :: for blocked trackers: refused, but not a policy decision."""
+    from yamlreel.safety import Unresolvable
+    for allow_private in (False, True):
+        with pytest.raises(Unresolvable, match="blocked by DNS"):
+            pinned_ips(host, allow_private)
+
+
+def test_a_mixed_answer_with_an_unspecified_address_keeps_the_policy_refusal():
+    from yamlreel.safety import Unresolvable
+    with pytest.raises(UnsafeInput) as e:
+        pinned_ips("halfblocked.test", True)
+    assert not isinstance(e.value, Unresolvable)
+
+
+def test_an_unspecified_address_literal_stays_a_policy_refusal():
+    from yamlreel.safety import Unresolvable
+    with pytest.raises(UnsafeInput) as e:
+        pinned_ips("0.0.0.0", True)
+    assert not isinstance(e.value, Unresolvable)
+
+
+def test_the_proxy_refuses_a_dns_blocked_host_with_403_and_does_not_record_it(connect_spy):
+    from yamlreel.pinproxy import PinningProxy
+    with PinningProxy(allow_private=True) as px:
+        resp = _get(px.url, "http://blocked.test/")
+        assert px.refusal_count == 0
+    assert b" 403 " in resp.split(b"\r\n")[0] + b" "
+    assert all(a == "127.0.0.1" for a, _ in connect_spy)  # only the test client reached the proxy
