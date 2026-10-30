@@ -1,6 +1,7 @@
 """Timeline assembly and ffmpeg encoding."""
 from __future__ import annotations
 
+import math
 import re
 import shutil
 import subprocess
@@ -45,14 +46,27 @@ class Runtime:
         return cls(roots=[Path(spec.get("_dir", "."))])
 
 
-def scene_seconds(spec: dict[str, Any]) -> list[float]:
-    """Each scene's length in the video: its spec length, rounded to whole beats when music.snap is on."""
-    seconds = [float(s["seconds"]) for s in spec["scenes"]]
+def plan_durations(spec: dict[str, Any], floors: dict[int, float] | None = None) -> list[float]:
+    """The one place scene lengths are decided. `floors` maps a scene index to the shortest length it may have
+    (narrated scenes: speech plus gap).
+
+    Beat snap on: a scene is rounded to the nearest whole beat (at least one beat), and a scene that would then be
+    shorter than its floor is rounded up to the next beat, so speech is never cut. Snap off: max(length, floor)."""
+    floors = floors or {}
     music = spec["music"]
-    if music.get("snap") and music.get("bpm"):
-        beat = 60.0 / float(music["bpm"])
-        seconds = [max(beat, round(s / beat) * beat) for s in seconds]
-    return seconds
+    beat = 60.0 / float(music["bpm"]) if music.get("snap") and music.get("bpm") else None
+    out: list[float] = []
+    for i, sc in enumerate(spec["scenes"]):
+        s = float(sc["seconds"])
+        floor = floors.get(i, 0.0)
+        if beat is None:
+            d = max(s, floor)
+        else:
+            d = max(beat, round(s / beat) * beat)
+            if d < floor:
+                d = math.ceil(floor / beat - 1e-9) * beat
+        out.append(d)
+    return out
 
 
 def slugify(text: str) -> str:
@@ -61,7 +75,7 @@ def slugify(text: str) -> str:
 
 class Timeline:
     def __init__(self, spec: dict[str, Any], fmt: str, workdir: Path, scale: float = 1.0,
-                 runtime: Runtime | None = None):
+                 runtime: Runtime | None = None, durations: list[float] | None = None):
         W, H = FORMATS[fmt]
         W, H = int(W * scale), int(H * scale)
         self.fmt = fmt
@@ -71,7 +85,7 @@ class Timeline:
         self.ctx = Ctx(W, H, spec["_theme_obj"], workdir, Path(spec.get("_dir", ".")), roots=list(rt.roots),
                        allow_private_hosts=rt.allow_private_hosts, chromium=rt.chromium)
         scenes_spec = [dict(s) for s in spec["scenes"]]
-        for s, seconds in zip(scenes_spec, scene_seconds(spec)):
+        for s, seconds in zip(scenes_spec, durations if durations is not None else plan_durations(spec)):
             s["seconds"] = seconds
         self.scenes: list[Scene] = []
         for i, s in enumerate(scenes_spec):
@@ -283,7 +297,8 @@ def render(spec: dict[str, Any], fmt: str, out_dir: Path, fps: int = 30, scale: 
         # snapping has rounded them, and in case the caller never validated. Absolute limits always apply.
         limits = spec.get("limits") or {}
         limit = min(limits.get("max_seconds", HARD_LIMITS["max_seconds"]), HARD_LIMITS["max_seconds"])
-        total_seconds = sum(scene_seconds(spec))
+        durations = plan_durations(spec, voice_mod.scene_floors(spec, clips))
+        total_seconds = sum(durations)
         if total_seconds > limit:
             raise RenderError(f"after narration and beat snapping the video is {total_seconds:.1f}s; "
                               f"the limit is {limit:g}s (limits.max_seconds)")
@@ -291,9 +306,9 @@ def render(spec: dict[str, Any], fmt: str, out_dir: Path, fps: int = 30, scale: 
             check_frame_budget(total_seconds, fps, n_formats)
         except SpecError as e:
             raise RenderError(str(e)) from e
-        tl = Timeline(spec, fmt, cache, scale, rt)
+        tl = Timeline(spec, fmt, cache, scale, rt, durations=durations)
         total = tl.total
-        narration = voice_mod.write_wav(work / "narration.wav", voice_mod.build_track(spec, clips, total)) if clips else None
+        narration = voice_mod.write_wav(work / "narration.wav", voice_mod.build_track(clips, tl.starts, total)) if clips else None
         audio = _prepare_audio(spec, total, work, music_override, rt)
         poster = tl.frame_at(tl.poster_time())
         poster.convert("RGB").save(out / "poster.jpg", quality=92)
