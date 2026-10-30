@@ -43,11 +43,54 @@ DEFAULTS: dict[str, Any] = {
     "limits": {"max_seconds": 600, "max_scenes": 200},
 }
 HARD_LIMITS = {"max_seconds": 3600, "max_scenes": 1000}
+MAX_CLIENT_ID_CHARS = 200
+VOICE_SERVER_KEYS = ("url", "client_id", "timeout")
 PATH_KEYS = {("watermark", "image"), ("output_dir",), ("font_dir",), ("chromium_path",)}
 
 
 class ConfigError(ValueError):
     pass
+
+
+def describe_key(key: object) -> str:
+    """A mapping key as it can safely appear in a one-line error message."""
+    text = key if isinstance(key, str) else repr(key)
+    return text if text.isprintable() and len(text) <= 60 else repr(text[:60])
+
+
+def clamp_limits(raw: Any) -> dict[str, Any]:
+    """Validate `limits` and cap each value at its absolute limit (HARD_LIMITS). Raises ValueError.
+
+    Clamping, not an error, for a value above the cap: configs that set a larger number keep working."""
+    if not isinstance(raw, dict):
+        raise ValueError("limits must be a mapping")
+    for key in raw:
+        if key not in HARD_LIMITS:
+            raise ValueError(f"limits.{describe_key(key)}: unknown field for limits; allowed: {', '.join(sorted(HARD_LIMITS))}")
+    out: dict[str, Any] = {}
+    for key, hard in HARD_LIMITS.items():
+        v = raw.get(key, DEFAULTS["limits"][key])
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not v > 0:
+            raise ValueError(f"limits.{key} must be a positive number")
+        if key == "max_scenes" and not isinstance(v, int):
+            raise ValueError("limits.max_scenes must be a positive integer")
+        out[key] = min(v, hard)
+    return out
+
+
+def check_voice_server(vs: dict[str, Any]) -> None:
+    """Type and range of the voice_server settings. Raises ValueError."""
+    for key in vs:
+        if key not in VOICE_SERVER_KEYS:
+            raise ValueError(f"voice_server.{describe_key(key)}: unknown field; allowed: {', '.join(VOICE_SERVER_KEYS)}")
+    if "url" in vs and (not isinstance(vs["url"], str) or not vs["url"].strip()):
+        raise ValueError("voice_server.url must be a URL string")
+    cid = vs.get("client_id", "x")
+    if not isinstance(cid, str) or not cid.strip() or len(cid) > MAX_CLIENT_ID_CHARS:
+        raise ValueError(f"voice_server.client_id must be a non-empty string of at most {MAX_CLIENT_ID_CHARS} characters")
+    t = vs.get("timeout", 1)
+    if isinstance(t, bool) or not isinstance(t, (int, float)) or not 1 <= t <= 3600:
+        raise ValueError("voice_server.timeout must be a number of seconds between 1 and 3600")
 
 
 @dataclass
@@ -186,10 +229,10 @@ def load_config(explicit: str | Path | None = None, cwd: Path | None = None,
     font_dir = legacy.env("FONT_DIR")
     if font_dir:
         cfg.font_dirs.append(font_dir)
-    lim = cfg.data.get("limits", {})
-    for k, hard in HARD_LIMITS.items():
-        v = lim.get(k)
-        if not isinstance(v, (int, float)) or v <= 0:
-            raise ConfigError(f"limits.{k} must be a positive number")
-        lim[k] = min(v, hard)
+    try:
+        cfg.data["limits"] = clamp_limits(cfg.data.get("limits"))
+        if cfg.voice_server is not None:
+            check_voice_server(cfg.voice_server)
+    except ValueError as e:
+        raise ConfigError(str(e)) from e
     return cfg
